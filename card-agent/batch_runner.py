@@ -175,6 +175,7 @@ def main() -> int:
         if record is not None and record.get("itemType") == item["type"]:
             item["status"] = "done"
             item["updated_at"] = now_iso()
+            record["itemId"] = f"{customer_id}-{os.path.basename(item['item'])}"
             merge_record(result_path, record)
             save_manifest(manifest_path, items)
             print(f"[跳过] {item['item']} 已有有效结果，标记完成")
@@ -191,7 +192,7 @@ def main() -> int:
         record = load_json_if_valid(out_path)
         if code == 0 and record is not None:
             record.setdefault("customerId", customer_id)
-            record.setdefault("itemId", os.path.basename(item["item"]))
+            record["itemId"] = f"{customer_id}-{os.path.basename(item['item'])}"
             item["status"] = "done"
             merge_record(result_path, record)
             print(f"[完成] {item['item']}")
