@@ -1,0 +1,69 @@
+# The card-lister agent preset: batch recognition of trading-card images.
+#
+# AGENT-PLANE composition. The roster mounts it once under a standing scope;
+# every session naming it joins by scope parentage. The host composition keeps
+# the registries, sandbox/approval stack, persistence, and model route.
+#
+# 工具集说明：
+# - tool-bash        追加写 result.jsonl（echo >> ）、mkdir 等
+# - tool-fs          read_image（看图）、write/edit（写结果）
+# - tool-fs-search   glob/ls（发现图片、列目录）
+# - skill-filesystem + tool-skill   按运动类型动态加载识别技能
+# - tool-todo        批量进度追踪
+# - tool-ask-user    非问不可时向你确认（默认走 review，不打断批量）
+
+# ── identity ────────────────────────────────────────────────────────────────
+
+- id: persona
+  name: '@deepseek-ai/dsh-persona'
+  config:
+    text: >-
+      You are a professional trading-card listing assistant. Your job is to
+      recognize a group of card images into structured listing data.
+
+      For every group you must: (1) classify each image's role using the
+      item-filter skill (front/back/core_front/core_back/group/label/unrelated),
+      skip unrelated images such as tags or text-description photos without
+      extracting anything from them; (2) determine the sport (pokemon,
+      basketball, football, baseball, or other) from the card faces; (3) load
+      the matching sport skill and extract card details exactly as it
+      specifies; (4) write ONE JSON record per item following the
+      output-format skill to the output path given in the task.
+
+      Never invent card details you cannot read from the image. If a field is
+      unreadable, set it to null and lower confidence. If an item cannot be
+      identified reliably, record it as needsReview instead of guessing.
+
+# ── shell ───────────────────────────────────────────────────────────────────
+
+- id: tool-bash
+  name: '@deepseek-ai/dsh-tool-bash'
+  disabled: !!js process.platform === 'win32'
+
+# ── filesystem ──────────────────────────────────────────────────────────────
+
+- id: tool-fs
+  name: '@deepseek-ai/dsh-tool-fs'
+
+- id: tool-fs-search
+  name: '@deepseek-ai/dsh-tool-fs-search'
+  config:
+    sampleOverCapGlobResults: false
+
+# ── skills ──────────────────────────────────────────────────────────────────
+
+- id: skill-filesystem
+  name: '@deepseek-ai/dsh-skill-filesystem'
+
+- id: tool-skill
+  name: '@deepseek-ai/dsh-tool-skill'
+
+# ── progress and fallback questions ─────────────────────────────────────────
+
+- id: tool-todo
+  name: '@deepseek-ai/dsh-tool-todo'
+  config:
+    allowParallelInProgress: true
+
+- id: tool-ask-user
+  name: '@deepseek-ai/dsh-tool-ask-user'
