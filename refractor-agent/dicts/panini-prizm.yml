@@ -1,0 +1,35 @@
+# Panini Prizm 折射词典（示例种子，员工按实际经营维护）
+brand: panini
+series: prizm
+year: 2022
+refractions:
+  - name: 银折
+    name_en: Silver
+    pattern: 银折
+    color: 银
+    keywords: [银折, silver, silver refractor, silber]
+  - name: 碎冰银
+    name_en: Ice Silver
+    pattern: 碎冰
+    color: 银
+    keywords: [碎冰银, ice silver, 银色碎冰]
+  - name: 碎冰红
+    name_en: Red Ice
+    pattern: 碎冰
+    color: 红
+    keywords: [碎冰红, red ice, 红色碎冰, ice red]
+  - name: 碎冰蓝
+    name_en: Blue Ice
+    pattern: 碎冰
+    color: 蓝
+    keywords: [碎冰蓝, blue ice, 蓝色碎冰]
+  - name: 金折
+    name_en: Gold
+    pattern: 金折
+    color: 金
+    keywords: [金折, gold, gold refractor]
+  - name: 现在折射
+    name_en: Now
+    pattern: 现在折射
+    color: 无
+    keywords: [现在折射, now, now refractor]

@@ -1,0 +1,30 @@
+# Topps Chrome 折射词典（示例种子，员工按实际经营维护）
+brand: topps
+series: chrome
+year: 2023
+refractions:
+  - name: 普折射
+    name_en: Refractor
+    pattern: 银折
+    color: 银
+    keywords: [普折射, refractor, base refractor, silver]
+  - name: 金折射
+    name_en: Gold
+    pattern: 金折
+    color: 金
+    keywords: [金折射, gold, gold refractor]
+  - name: 紫脉冲
+    name_en: Violet Prism
+    pattern: 脉冲
+    color: 紫
+    keywords: [紫脉冲, violet prism, prism]
+  - name: 蓝折
+    name_en: Blue
+    pattern: 银折
+    color: 蓝
+    keywords: [蓝折, blue, blue refractor]
+  - name: 红折
+    name_en: Red
+    pattern: 银折
+    color: 红
+    keywords: [红折, red, red refractor]

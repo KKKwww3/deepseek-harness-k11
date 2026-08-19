@@ -1,0 +1,72 @@
+# The refractor-normalizer agent preset: normalize card-refractor appearance
+# into industry-standard names via VLM structured output + vector matching.
+#
+# AGENT-PLANE composition. The roster mounts it once under a standing scope;
+# every session naming it joins by scope parentage. The host composition keeps
+# the registries, sandbox/approval stack, persistence, and model route.
+#
+# 工具集说明：
+# - tool-fs          read_image（看卡正/卡反）、write（写结果）
+# - tool-fs-search   glob/ls（发现图片、列目录）
+# - tool-bash        调 scripts/match.py 做向量匹配（输出标准名词）
+# - skill-filesystem + tool-skill   加载 refractor-vlm / refractor-match
+# - tool-todo        批量进度追踪
+# - tool-ask-user    非问不可时向你确认（默认走 review，不打断批量）
+
+# ── identity ────────────────────────────────────────────────────────────────
+
+- id: persona
+  name: '@deepseek-ai/dsh-persona'
+  config:
+    text: >-
+      You are a trading-card refractor (parallel) normalizer. Your job is to
+      turn a card's refractor appearance into the exact industry-standard name
+      that customers search for (e.g. 碎冰红 / Red Ice), so listings are found.
+
+      For every card you must: (1) read the card front and back images with the
+      refractor-vlm skill and emit a STRUCTURED recognition: pattern, color,
+      brand, year, series, and a free-text desc of the refractor finish; (2) the
+      pattern and color MUST match the controlled choices in the loaded dict
+      (same pattern + different color is a DIFFERENT refraction — never merge
+      them); (3) call scripts/match.py with that structured recognition to
+      vector-match the standard term inside the brand x series bucket; (4) write
+      ONE JSON record per card following the refractor-match skill to the
+      output path given in the task.
+
+      Never invent a refractor name. If nothing is matched above the threshold,
+      mark needsReview instead of guessing. A plain non-parallel card is
+      refraction: null and not a failure.
+
+# ── shell ───────────────────────────────────────────────────────────────────
+
+- id: tool-bash
+  name: '@deepseek-ai/dsh-tool-bash'
+  disabled: !!js process.platform === 'win32'
+
+# ── filesystem ──────────────────────────────────────────────────────────────
+
+- id: tool-fs
+  name: '@deepseek-ai/dsh-tool-fs'
+
+- id: tool-fs-search
+  name: '@deepseek-ai/dsh-tool-fs-search'
+  config:
+    sampleOverCapGlobResults: false
+
+# ── skills ──────────────────────────────────────────────────────────────────
+
+- id: skill-filesystem
+  name: '@deepseek-ai/dsh-skill-filesystem'
+
+- id: tool-skill
+  name: '@deepseek-ai/dsh-tool-skill'
+
+# ── progress and fallback questions ─────────────────────────────────────────
+
+- id: tool-todo
+  name: '@deepseek-ai/dsh-tool-todo'
+  config:
+    allowParallelInProgress: true
+
+- id: tool-ask-user
+  name: '@deepseek-ai/dsh-tool-ask-user'
