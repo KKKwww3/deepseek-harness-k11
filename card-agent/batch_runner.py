@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""批量处理编排脚本：manifest 状态机 + 断点续跑 + 可选预分类层（YOLO / GLM）。
+"""批量处理编排脚本：manifest 状态机 + 断点续跑 + 可选预分类层（YOLO / VLM）。
 
 流程：
   1. 扫描客户目录 singles/* 与 lots/* 生成待办项，登记到 manifest
@@ -14,17 +14,16 @@
 from __future__ import annotations
 
 import argparse
-import base64
 import csv
 import json
-import mimetypes
 import os
 import shutil
 import subprocess
 import sys
-import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
+
+from preclassifier import IMG_EXTS, create
 
 ROLES = {
     "single_front",
@@ -35,7 +34,6 @@ ROLES = {
     "core_back",
     "unrelated",
 }
-IMG_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
 
 def now_iso() -> str:
@@ -111,67 +109,11 @@ def image_files(item_dir: Path) -> list[Path]:
     return files
 
 
-def classify_yolo(images: list[Path], model_path: str, conf: float) -> dict[str, str]:
-    """用 YOLO 分类模型对每张图判角色。类名与 ROLES 对齐；不在集合内视为 unrelated。"""
-    from ultralytics import YOLO  # 延迟导入，未安装时仅在使用 yolo 模式报错
-
-    model = YOLO(model_path)
-    result: dict[str, str] = {}
-    for img in images:
-        try:
-            res = model.predict(str(img), conf=conf, verbose=False)[0]
-            top = res.probs.top1
-            name = res.names[top]
-            result[img.name] = name if name in ROLES else "unrelated"
-        except Exception:
-            result[img.name] = "unrelated"
-    return result
-
-
-def classify_glm(images: list[Path], api_key: str, endpoint: str, model: str) -> dict[str, str]:
-    """用 GLM 视觉模型（OpenAI 兼容 /chat/completions）对每张图判角色。"""
-    labels = ", ".join(sorted(ROLES))
-    result: dict[str, str] = {}
-    for img in images:
-        mime = mimetypes.guess_type(img.name)[0] or "image/jpeg"
-        b64 = base64.b64encode(img.read_bytes()).decode()
-        payload = {
-            "model": model,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": f"判断这张图片属于以下哪种角色：{labels}。只输出一个类别名，不要解释。"},
-                        {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
-                    ],
-                }
-            ],
-            "max_tokens": 16,
-        }
-        req = urllib.request.Request(
-            endpoint,
-            data=json.dumps(payload).encode(),
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                data = json.loads(resp.read().decode())
-            label = data["choices"][0]["message"]["content"].strip().lower()
-            result[img.name] = label if label in ROLES else "unrelated"
-        except Exception:
-            result[img.name] = "unrelated"
-    return result
-
-
-def preclassify(item_dir: Path, mode: str, args) -> dict[str, str] | None:
+def preclassify(item_dir: Path, classifier) -> dict[str, str] | None:
     images = image_files(item_dir)
-    if not images or mode == "none":
+    if not images or classifier is None:
         return None
-    if mode == "yolo":
-        return classify_yolo(images, args.yolo_model, args.yolo_conf)
-    if mode == "glm":
-        return classify_glm(images, args.glm_api_key, args.glm_endpoint, args.glm_model)
-    return None
+    return classifier.classify(images)
 
 
 def write_roles_hint(out_dir: Path, key: str, roles: dict[str, str]) -> Path:
@@ -189,7 +131,7 @@ def build_prompt(template: str, item_dir: Path, out_path: Path, roles: dict[str,
     )
     if roles:
         hint = (
-            "\n\n===== 预分类结果（来自 YOLO/GLM，仅供参考，请复核） =====\n"
+            "\n\n===== 预分类结果（来自 YOLO/VLM，仅供参考，请复核） =====\n"
             + json.dumps(roles, ensure_ascii=False)
             + "\n角色含义：single_front=单卡正面 single_back=单卡反面 lot_group=lot合照 "
             "lot_label=包装袋编号图 core_front=核心卖点正面 core_back=核心卖点反面 unrelated=干扰图。\n"
@@ -251,18 +193,20 @@ def main() -> int:
     parser.add_argument("--customer-id", default="", help="客户 ID（默认取目录名）")
     parser.add_argument("--template", default="", help="任务模板文件路径（默认用内置模板）")
     parser.add_argument("--timeout", type=int, default=900, help="单次 headless 超时秒数（默认 900）")
-    parser.add_argument("--preclassify", choices=["none", "yolo", "glm"], default="none", help="预分类方式（默认 none）")
+    parser.add_argument("--preclassify", choices=["none", "yolo", "vlm"], default="none", help="预分类方式：none/yolo/vlm（默认 none）")
     parser.add_argument("--yolo-model", default="", help="YOLO 分类权重路径（--preclassify yolo 时必填）")
     parser.add_argument("--yolo-conf", type=float, default=0.5, help="YOLO 置信度阈值（默认 0.5）")
-    parser.add_argument("--glm-api-key", default="", help="GLM API Key（--preclassify glm 时必填）")
-    parser.add_argument("--glm-endpoint", default="https://open.bigmodel.cn/api/paas/v4/chat/completions", help="GLM OpenAI 兼容端点")
-    parser.add_argument("--glm-model", default="glm-4v-flash", help="GLM 视觉模型名（默认 glm-4v-flash）")
+    parser.add_argument("--vlm-endpoint", default="https://open.bigmodel.cn/api/paas/v4/chat/completions", help="VLM OpenAI 兼容端点（默认智谱 GLM）")
+    parser.add_argument("--vlm-model", default="glm-4v-flash", help="VLM 视觉模型名（默认 glm-4v-flash）")
+    parser.add_argument("--vlm-api-key", default="", help="VLM API Key（--preclassify vlm 时必填）")
+    parser.add_argument("--vlm-timeout", type=int, default=60, help="VLM 单次请求超时秒数（默认 60）")
+    parser.add_argument("--vlm-batch-size", type=int, default=8, help="VLM 单次请求携带的图片数（默认 8）")
     args = parser.parse_args()
 
     if args.preclassify == "yolo" and not args.yolo_model:
         parser.error("--preclassify yolo 需要 --yolo-model")
-    if args.preclassify == "glm" and not args.glm_api_key:
-        parser.error("--preclassify glm 需要 --glm-api-key")
+    if args.preclassify == "vlm" and not args.vlm_api_key:
+        parser.error("--preclassify vlm 需要 --vlm-api-key")
 
     customer_dir = Path(args.customer).resolve()
     out_dir = Path(args.out).resolve()
@@ -275,6 +219,8 @@ def main() -> int:
 
     template_path = Path(args.template) if args.template else Path(__file__).parent / "task-prompt.md"
     template = template_path.read_text(encoding="utf-8")
+
+    classifier = create(args.preclassify, args)
 
     items = scan_items(customer_dir)
     manifest = reconcile(manifest_path, items)
@@ -302,7 +248,7 @@ def main() -> int:
             print(f"  已有有效结果，直接完成", flush=True)
             continue
 
-        roles = preclassify(item_dir, args.preclassify, args)
+        roles = preclassify(item_dir, classifier)
         if roles is not None:
             write_roles_hint(out_dir, key, roles)
             non_interference = [r for r in roles.values() if r != "unrelated"]

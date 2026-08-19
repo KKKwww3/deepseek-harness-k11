@@ -56,16 +56,19 @@ python3 batch_runner.py \
   --yolo-conf 0.5
 ```
 
-### 3. 用 GLM 视觉模型预分类
+### 3. 用 VLM 预分类（OpenAI 兼容端点，一次请求可带多图）
 
 ```sh
 python3 batch_runner.py \
   --customer /客户A --out /输出A --customer-id A \
-  --preclassify glm \
-  --glm-api-key sk-xxx \
-  --glm-endpoint https://open.bigmodel.cn/api/paas/v4/chat/completions \
-  --glm-model glm-4v-flash
+  --preclassify vlm \
+  --vlm-api-key sk-xxx \
+  --vlm-endpoint https://open.bigmodel.cn/api/paas/v4/chat/completions \
+  --vlm-model glm-4v-flash \
+  --vlm-batch-size 8
 ```
+
+支持任意 OpenAI 兼容视觉端点（智谱 GLM、豆包、通义千问 Qwen-VL、本地 vLLM 等），换 endpoint/model/key 即可；`--vlm-batch-size` 控制单次请求携带的图片数（一次批量判定，减少请求次数）。
 
 ### 4. 中断后续跑
 
@@ -75,8 +78,8 @@ python3 batch_runner.py \
 
 - `--preclassify none`（默认）：角色判定全部交给模型，每组都会跑一次 headless。
 - `--preclassify yolo`：用 YOLO 分类模型逐图判角色；某组全为 `unrelated` 时**直接标 skipped，不启动模型**（省一次调用）。角色清单写入 `out/roles/<key>.json` 并作为提示注入 prompt，模型复核沿用。
-- `--preclassify glm`：同上，用 GLM 视觉模型逐图判角色（OpenAI 兼容端点，逐图 HTTP 调用）。
-- YOLO/GLM 判定失败的图默认标 `unrelated` 兜底；低置信依赖 `--yolo-conf` 阈值与 review 队列。
+- `--preclassify vlm`：用 VLM（OpenAI 兼容端点）判角色，**一次请求携带 `--vlm-batch-size` 张图批量判定**；全干扰组同样直接 skipped。支持任意 OpenAI 兼容视觉端点。
+- YOLO/VLM 判定失败的图默认标 `unrelated` 兜底；低置信依赖 `--yolo-conf` 阈值与 review 队列。
 
 ## 输出
 
