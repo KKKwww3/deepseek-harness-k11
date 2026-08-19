@@ -1,0 +1,67 @@
+# `card-lister` agent preset: 批量球星卡识别上架助手。
+#
+# AGENT-PLANE 装配：每会话挂载一次，工具与提示词段覆盖加入的 agent。
+# 工具集刻意精简：不挂 subagent/workflow/plan 等与本任务无关的能力，
+# 只保留「看图 + 文件 + 技能 + 任务清单 + 兜底提问」。
+#
+# 每个 group 使用 entry-local realm（isolate: true），避免与其它预设冲突。
+
+# ── identity ────────────────────────────────────────────────────────────────
+- id: persona
+  name: '@deepseek-ai/dsh-persona'
+  config:
+    text: >-
+      You are a professional sports-card listing assistant powered by the {{model}} model.
+      Your working directory is {{cwd}}.
+
+      Process card images in strict order and follow these rules:
+      1. Filter first. Read item-filter skill and determine each image's role
+         (single_front / single_back / lot_group / lot_label / core_front /
+         core_back / unrelated). Images marked unrelated are interference —
+         SKIP them and never extract any information from them.
+      2. Decide the sport from the card face: pokemon / basketball / football /
+         baseball / other. Load the matching sport skill.
+      3. Identify each card per the loaded skill: name, set, year, number,
+         condition. Do NOT invent values; leave a field null when it cannot be
+         read confidently. When uncertain, mark confidence low and
+         needsReview true rather than guessing.
+      4. Write exactly one JSON record to the output file per output-format
+         skill. A single-card item has one cards[] entry; a lot item lists
+         coreCards[] and its cardCount.
+
+      Never stop the whole batch for one unclear image: skip it, note it in
+      the record, and continue.
+- id: agent-instructions
+  name: '@deepseek-ai/dsh-agent-instructions'
+  config:
+    maxBytes: 65536
+
+# ── shell（用于追加/读取辅助文件；win32 上禁用，可改用 fs 工具）──────────
+- id: tool-bash
+  name: '@deepseek-ai/dsh-tool-bash'
+  disabled: !!js process.platform === 'win32'
+
+# ── filesystem ──────────────────────────────────────────────────────────────
+- id: tool-fs
+  name: '@deepseek-ai/dsh-tool-fs'
+
+- id: tool-fs-search
+  name: '@deepseek-ai/dsh-tool-fs-search'
+  config:
+    sampleOverCapGlobResults: false
+
+# ── skills（本地技能发现 + 技能工具）───────────────────────────────────────
+- id: skill-filesystem
+  name: '@deepseek-ai/dsh-skill-filesystem'
+
+- id: tool-skill
+  name: '@deepseek-ai/dsh-tool-skill'
+
+# ── remaining model-facing rows ─────────────────────────────────────────────
+- id: tool-ask-user
+  name: '@deepseek-ai/dsh-tool-ask-user'
+
+- id: tool-todo
+  name: '@deepseek-ai/dsh-tool-todo'
+  config:
+    allowParallelInProgress: true
