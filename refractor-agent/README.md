@@ -25,10 +25,10 @@
 | embedding 模型 | **火山方舟 `doubao-embedding-vision-251215`**（OpenAI 兼容多模态端点，**1024 维**，MRL 降维以适配 pgvector HNSW 的 2000 维上限） |
 | 图片是否入向量 | **否**。图片只用于 VLM 识别，不做图片 embedding——实拍光线/角度/颜色漂移大，且同卡复售概率低；折射关键词足以区分 |
 | VLM 模型 | **火山方舟 `doubao-seed-2-0-lite-260428`**（`/api/v3/responses`，本地图走 base64 data URI） |
-| 映射词典 | **两层**：`dicts/types.yml` 全局折射类型（向量唯一来源）+ `dicts/series/*.yml` 系列命名表（对外叫法） |
-| 候选框 | 折射识别器**自判定品牌/系列**（从反面 VLM 文本判定），决定命名查哪张表；**无 year**（折射规格跨年份一致） |
+| 映射词典 | **单文件 `dicts/refractions.yml`**：一行 = 一条数据库记录（pattern/color/keywords/names） |
+| 候选框 | 折射识别器**自判定品牌/系列**（从反面 VLM 文本判定），决定命名取哪个系列；**无 year**（折射规格跨年份一致） |
 | VLM 输出 | **强制含「图案 + 颜色」结构化属性**，确保同图案不同颜色可区分 |
-| 受控枚举 | **单一事实源 `dicts/enum.yml`**：VLM 提示词由它程序化生成，`embed.py` 校验词典值 |
+| 受控枚举 | **自动推导**：pattern/color 合法集 = `dicts/refractions.yml` 已登记折射的取值（+平卡/其他、无/其他），无需单独枚举文件 |
 | 输入 | 卡片正面 + 反面原图 → VLM 识别输出文字信息 |
 | 向量库落盘 | **外部向量库**：**Supabase pgvector**（云端持久，`VECTOR_STORE=pgvector`，表 `refractor_types`）；`VECTOR_STORE=lance` 可切本地 LanceDB 兜底。`embed.py` 幂等重建 |
 | 效果度量 | **金标集 + `scripts/evaluate.py`**（见 `eval/README.md`），达门槛后才对接 card-agent |
@@ -46,13 +46,9 @@ refractor-agent/
 ├── skills/                  识别技能（源文件，按需拷入项目 .dsh/skills/）
 │   ├── refractor-vlm/       VLM 识别指引：强制图案+颜色结构化 + 自判定品牌/系列
 │   └── refractor-match/     全局类型匹配 + 系列命名、置信度与 review 规则
-├── dicts/                   员工维护的词典（两层）
-│   ├── enum.yml             受控枚举（pattern/color 单一事实源）
-│   ├── types.yml            全局折射类型（向量唯一来源，无 year）
-│   ├── schema.md            词典字段规范（本文档详述）
-│   └── series/              系列命名表（每品牌×系列一份）
-│       ├── panini-prizm.yml
-│       └── topps-chrome.yml
+├── dicts/                   员工维护的词典（单文件）
+│   ├── refractions.yml      折射词典（一行 = 一条数据库记录，员工唯一维护文件）
+│   └── schema.md            词典字段规范（本文档详述）
 ├── eval/
 │   ├── README.md            效果评估设计文档
 │   ├── golden.yaml          金标数据集（每系列 ≥ 20 条目标）
@@ -60,9 +56,10 @@ refractor-agent/
 ├── scripts/
 │   ├── refract_store.py     向量库（pgvector/lance 双后端）+ Embedder + .env 加载
 │   ├── setup_db.py          初始化 pgvector：扩展 + 表 + HNSW 索引（幂等）
-│   ├── vlm.py               VLM 识别（Responses API，提示词由 enum.yml 生成）
-│   ├── embed.py             结构化词典 → 生成向量 → 写入向量库（幂等重建 + 枚举校验）
-│   ├── match.py             文字描述 → embedding → 全局类型匹配 + 系列命名 → 标准名词
+│   ├── vlm.py               VLM 识别（Responses API，枚举由 refractions.yml 自动推导）
+│   ├── embed.py             refractions.yml → 生成向量 → 写入向量库（幂等重建 + 校验）
+│   ├── match.py             文字描述 → embedding → 类型匹配 + 系列命名 → 标准名词
+│   ├── add_type.py          一键登记新折射（自动写单文件 + 重建）
 │   ├── evaluate.py          金标集评测 + 阈值校准（见 eval/README.md）
 │   └── run_batch.py         批量：一批卡片 → VLM 文本 → 匹配 → 结果/review
 ├── task-prompt.md           单项任务指令模板
@@ -82,44 +79,39 @@ refractor-agent/
         "desc":    "红色水晶裂纹状折射"  # 自由外观描述（向量用）
       }
   → [embed] pattern+color+desc → embedding 向量
-  → 全局折射类型向量匹配（向量库 = dicts/types.yml，无品牌×系列维度）
+  → 折射类型向量匹配（向量库 = dicts/refractions.yml，每折射一条）
   → 按 brand × series 查系列命名表 → 该系列的标准名词（如 panini 的 "碎冰红 Red Ice"）
   → 输出 {brand, series, refraction, name_en, pattern, color, matchScore}
   → 低置信 / 类型未命中 / 命名表查不到 → 写入 review 清单，标记 needsReview
 ```
 
 > 同一折射类型在不同系列叫法不同：如 (银折, 银) 在 Panini 叫「银折/Silver」、
-> 在 Topps Chrome 叫「普折射/Refractor」——命名表按系列区分，向量只存类型。
+> 在 Topps Chrome 叫「普折射/Refractor」——叫法按系列存，向量只存类型。
 
 ## 映射词典规范（dicts/schema.md）
 
-两层结构：全局类型（向量来源）+ 系列命名表（对外叫法）。无 `year`。
+**单文件 `dicts/refractions.yml`**，一行 = 一条数据库记录。无 `year`。
 
 ```yaml
-# dicts/types.yml — 全局折射类型（每类型只登记一次，跨系列共享）
-types:
-  - pattern: 碎冰
-    color: 红
-    keywords: [碎冰红, 红色碎冰, red ice, ice red]   # 别名/外观描述（向量用）
-```
-
-```yaml
-# dicts/series/panini-prizm.yml — 本系列的对外叫法
-brand: panini
-series: prizm
-names:
-  - pattern: 碎冰          # 必须已在 types.yml 登记
-    color: 红
-    name: 碎冰红           # 对外中文（客户搜索词）
-    name_en: Red Ice
+refractions:
+  - pattern: 碎冰            # 图案类型（新增即自动成为 VLM 枚举）
+    color: 红                # 颜色
+    keywords: [碎冰红, 红色碎冰, red ice]   # 别名/外观描述（向量用）
+    names:                   # 对外叫法，按品牌×系列
+      panini-prizm: {name: 碎冰红, name_en: Red Ice}
+      topps-chrome: {name: 红折, name_en: Red}
+aliases:                     # 版权文字 → names 的 key（新增品牌×系列才动）
+  brands:
+    panini: [PANINI, Panini]
+  series:
+    prizm: [PRIZM, PRIZM BASKETBALL]
 ```
 
 约定：
-- **全局类型唯一**：`(pattern, color)` 在 `types.yml` 全局唯一；向量只由此生成。
-- **系列命名按需登记**：每个 `(pattern, color)` 必须已在 `types.yml` 登记；该系列不卖的折射不登记。
-- **同图不同色 = 独立条目**：碎冰银 / 碎冰红 / 碎冰蓝 各自一条。
-- VLM 的 `pattern` / `color` 与词典受同一份 `enum.yml` 约束。
-- `embed.py` 幂等重建：全量覆盖，保证词典改动后向量不含脏数据。
+- **一行一折射**：`(pattern, color)` 唯一（同图不同色 = 独立条目，碎冰银/碎冰红/碎冰蓝 各一条）。
+- **枚举自动推导**：VLM 的 pattern/color 合法集 = 已登记折射的取值（+平卡/其他、无/其他），无单独枚举文件。
+- **命名按系列**：`names` 里该系列没登记 = 该系列不卖这种折 → 匹配时进 review。
+- `embed.py` 幂等重建：全量覆盖，保证词典改动后向量不含脏数据；改完只需跑一次。
 
 ## 输出规范
 
@@ -147,7 +139,7 @@ names:
 - 全局类型匹配分阈值（默认 0.70，已按 doubao-embedding-vision 用 `--sweep` 校准；
   可配置 `--threshold`）。低于阈值 → 进 review。
 - 命中类型但查不到命名：品牌/系列 unknown，或该系列命名表里没登记这种折 → 进 review。
-- `needsReview` 项由员工复核后：若是新折射种类就补进 `types.yml` + 对应 `series/` 命名表，若命名缺失就补命名表，下次自动命中。
+- `needsReview` 项由员工复核后：在 `dicts/refractions.yml` 里补 keywords（或登记新折射 + 系列叫法），下次自动命中。
 - ⚠️ 阈值随 embedding 模型和金标集变化：扩充金标集后务必重跑
   `scripts/evaluate.py --sweep` 复核（见 `eval/README.md`）。
 
@@ -183,11 +175,11 @@ python scripts/evaluate.py --mode match --sweep   # 阈值校准
 ## 已确认 vs 仍开放
 
 - [x] 独立 Agent、纯文本向量匹配、自判定品牌/系列、强制图案+颜色
-- [x] 词典两层结构：全局类型 `types.yml`（向量唯一来源）+ 系列命名表 `series/`；去掉 year（折射规格跨年份一致）
+- [x] 词典单文件 `dicts/refractions.yml`（一行 = 一条数据库记录，含按系列叫法）；去掉 year
+- [x] 枚举自动推导（pattern/color 合法集 = 已登记折射取值 + 平卡/其他、无/其他）
 - [x] 向量库落盘：外部向量库 **Supabase pgvector**（云端持久），LanceDB 本地兜底
 - [x] embedding 模型选型：火山方舟 `doubao-embedding-vision-251215`（图片不入向量）
 - [x] VLM 选型：火山方舟 `doubao-seed-2-0-lite-260428`（Responses API）
-- [x] 受控枚举单一事实源 `dicts/enum.yml`（VLM 提示词程序化生成 + embed 校验）
 - [x] 效果度量：金标集 + `scripts/evaluate.py`（匹配层 / 全链路 / 阈值校准）
 - [x] 首版覆盖：Panini Prizm + Topps Chrome
 - [ ] 金标集扩充到每系列 ≥ 20 条真实卡，跑通并通过「通过门槛」（见 eval/README.md）

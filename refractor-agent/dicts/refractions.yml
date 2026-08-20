@@ -1,0 +1,81 @@
+# 折射词典（唯一维护文件）
+#
+# 每一行 = 向量库 refractor_types 表里的一条记录。员工只填：
+#   pattern / color / keywords（向量用）+ names（对外叫法，按系列）
+# id / text / vector 由 embed.py 自动生成，不用填。
+#
+# 改动后跑：python scripts/embed.py    （自动重建向量库 + 校验）
+
+refractions:
+  # ── 银折（基础折射，按颜色分）──────────────────────────────────────
+  - pattern: 银折
+    color: 银
+    keywords: [银折, 银白折, 普折射, 银白色普通折射, silver, silver refractor, base refractor, silber]
+    names:
+      panini-prizm: {name: 银折, name_en: Silver}
+      topps-chrome: {name: 普折射, name_en: Refractor}
+  - pattern: 银折
+    color: 红
+    keywords: [红折, 红色折射, red, red refractor]
+    names:
+      topps-chrome: {name: 红折, name_en: Red}
+  - pattern: 银折
+    color: 蓝
+    keywords: [蓝折, 蓝色折射, blue, blue refractor]
+    names:
+      topps-chrome: {name: 蓝折, name_en: Blue}
+
+  # ── 碎冰（水晶裂纹，按颜色分）──────────────────────────────────────
+  - pattern: 碎冰
+    color: 银
+    keywords: [碎冰银, 银色碎冰, silver ice, ice silver, 银色冰裂纹]
+    names:
+      panini-prizm: {name: 碎冰银, name_en: Ice Silver}
+  - pattern: 碎冰
+    color: 红
+    keywords: [碎冰红, 红色碎冰, red ice, ice red, 红色冰裂纹, 红冰裂]
+    names:
+      panini-prizm: {name: 碎冰红, name_en: Red Ice}
+  - pattern: 碎冰
+    color: 蓝
+    keywords: [碎冰蓝, 蓝色碎冰, blue ice, 蓝色冰裂纹]
+    names:
+      panini-prizm: {name: 碎冰蓝, name_en: Blue Ice}
+
+  # ── 金折 ─────────────────────────────────────────────────────────
+  - pattern: 金折
+    color: 金
+    keywords: [金折, 金折射, 金色折射, gold, gold refractor]
+    names:
+      panini-prizm: {name: 金折, name_en: Gold}
+      topps-chrome: {name: 金折射, name_en: Gold}
+
+  # ── 现在折射 ─────────────────────────────────────────────────────
+  - pattern: 现在折射
+    color: 无
+    keywords: [现在折射, now, now refractor]
+    names:
+      panini-prizm: {name: 现在折射, name_en: Now}
+
+  # ── 脉冲 ─────────────────────────────────────────────────────────
+  - pattern: 脉冲
+    color: 紫
+    keywords: [紫脉冲, 紫色脉冲, violet prism, prism]
+    names:
+      topps-chrome: {name: 紫脉冲, name_en: Violet Prism}
+
+  # ── Hyper（炫彩/全息折射）─────────────────────────────────────────
+  - pattern: hyper
+    color: 无
+    keywords: [hyper折, hyper, hyper refractor, 海波折, 炫彩折射, 全息彩虹折射]
+    names:
+      panini-prizm: {name: Hyper折, name_en: Hyper}
+
+# ── 品牌/系列别名（把卡片版权文字/变体映射到 names 的 key，新增系列才动）─
+aliases:
+  brands:
+    panini: [PANINI, Panini, 帕尼尼]
+    topps: [TOPPS, Topps, 托普斯]
+  series:
+    prizm: [PRIZM, Prizm, PRIZM BASKETBALL, Prizm Basketball, prizm basketball]
+    chrome: [CHROME, Topps Chrome, topps chrome, CHROME BASEBALL, Chrome Baseball, chrome baseball]

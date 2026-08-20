@@ -304,6 +304,66 @@ def create_store(db_path: str | None = None, dsn: str | None = None) -> BaseStor
     return LanceStore(db_path or default_db)
 
 
+# ── dict→store self-healing sync ───────────────────────────────────────────────
+
+FINGERPRINT_FILE = "vector_fingerprint.json"
+
+
+def dict_fingerprint(dict_dir: Path) -> str:
+    """SHA-1 over every dict *.yml (relative path + bytes) — detects any edit."""
+    import hashlib
+
+    h = hashlib.sha1()
+    paths = sorted(p for p in Path(dict_dir).rglob("*.yml") if p.is_file())
+    for p in paths:
+        h.update(str(p.relative_to(dict_dir)).encode("utf-8"))
+        h.update(b"\0")
+        h.update(p.read_bytes())
+    return h.hexdigest()
+
+
+def fingerprint_path() -> Path:
+    return Path(__file__).resolve().parent.parent / "db" / FINGERPRINT_FILE
+
+
+def write_fingerprint(dict_dir: Path) -> None:
+    fp = fingerprint_path()
+    fp.parent.mkdir(parents=True, exist_ok=True)
+    fp.write_text(dict_fingerprint(dict_dir), encoding="utf-8")
+
+
+def ensure_synced(dict_dir: Path) -> str:
+    """Auto-rebuild the vector store when the dicts changed (idempotent).
+
+    Returns ``'synced'`` (fingerprint matches), ``'rebuilt'`` (dicts were newer
+    and embed.py re-ran), or ``'rebuild-failed'`` (offline/error; caller may
+    keep serving the stale store). Match/evaluate call this before reading rows.
+    """
+    import subprocess
+    import sys
+
+    fp = fingerprint_path()
+    cur = dict_fingerprint(dict_dir)
+    try:
+        if fp.is_file() and fp.read_text(encoding="utf-8").strip() == cur:
+            return "synced"
+    except OSError:
+        pass
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(Path(__file__).with_name("embed.py")),
+             "--dict-dir", str(dict_dir)],
+            capture_output=True, text=True,
+        )
+        if proc.returncode == 0:
+            write_fingerprint(dict_dir)
+            return "rebuilt"
+        print(f"[sync] rebuild failed:\n{proc.stdout}{proc.stderr}", file=sys.stderr)
+    except Exception as exc:  # noqa: BLE001 - offline/network failure, keep serving
+        print(f"[sync] rebuild error: {exc}", file=sys.stderr)
+    return "rebuild-failed"
+
+
 def main() -> int:  # convenience: source the environment and report mode
     load_env()
     e = Embedder()

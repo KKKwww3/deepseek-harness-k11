@@ -26,6 +26,7 @@ from refract_store import (
     Embedder,
     cosine,
     create_store,
+    ensure_synced,
     load_env,
     LOCAL_THRESHOLD,
     REMOTE_THRESHOLD,
@@ -232,6 +233,10 @@ def main() -> int:
     args = ap.parse_args()
 
     load_env()
+    # auto-rebuild the vector store when dicts/*.yml changed
+    sync = ensure_synced(DICT_DIR)
+    if sync != "synced":
+        print(f"[sync] vector store {sync}", file=sys.stderr)
     embedder = Embedder()
     store = create_store(args.db)
     rows = store.rows()

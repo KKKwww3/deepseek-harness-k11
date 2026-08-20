@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """Match a refractor recognition to the standard industry name.
 
-Query text = ``pattern + color + desc``. The vector library holds GLOBAL refractor
-types (one vector per pattern+color, shared across all series), so matching is a
-single cosine search — no bucket narrowing. After the best type clears the
-threshold, the series naming table (``dicts/series/<brand>-<series>.yml``) maps
-it to the customer-facing name for that series (same refractor, different series
-= different name, e.g. 银折 vs 普折射).
+Query text = ``pattern + color + desc``. The vector library holds one vector per
+registered refraction (``dicts/refractions.yml``), so matching is a single
+cosine search. After the best match clears the threshold, the ``names`` section
+maps it to the customer-facing term for that brand x series (same refractor,
+different series = different name, e.g. 银折 vs 普折射).
 
 Prints a single JSON object to stdout.
 """
@@ -24,12 +23,32 @@ from refract_store import (
     Embedder,
     cosine,
     create_store,
+    ensure_synced,
     load_env,
     LOCAL_THRESHOLD,
     REMOTE_THRESHOLD,
 )
 
-SERIES_DIR = "series"
+DICT_FILE = "refractions.yml"
+
+
+def norm(s: str) -> str:
+    """Lowercase, strip, and collapse inner whitespace (for alias lookup)."""
+    return " ".join(s.strip().lower().split())
+
+
+def load_dict(dict_dir: Path) -> dict:
+    with (dict_dir / DICT_FILE).open(encoding="utf-8") as fh:
+        return yaml.safe_load(fh) or {}
+
+
+def alias_map(doc: dict, group: str) -> dict[str, str]:
+    """{normalized alias: canonical key} for brands or series."""
+    out: dict[str, str] = {}
+    for canon, aliases in (doc.get("aliases", {}).get(group) or {}).items():
+        for a in [canon, *(aliases or [])]:
+            out[norm(a)] = canon
+    return out
 
 
 def query_text(rec: dict) -> str:
@@ -48,19 +67,23 @@ def best_type(scores: list[tuple[float, dict]], threshold: float) -> dict | None
 
 
 def series_name(rec: dict, pattern: str, color: str, dict_dir: Path) -> dict | None:
-    """Look up the customer-facing name for (pattern,color) in this brand x series."""
+    """Look up the customer-facing name in this brand x series from the single dict."""
     brand, series = rec.get("brand"), rec.get("series")
     if not brand or not series:
         return None
-    path = dict_dir / SERIES_DIR / f"{brand}-{series}.yml"
-    if not path.is_file():
+    doc = load_dict(dict_dir)
+    b = alias_map(doc, "brands").get(norm(brand), norm(brand)) or None
+    s = alias_map(doc, "series").get(norm(series), norm(series)) or None
+    if not b or not s:
         return None
-    with path.open(encoding="utf-8") as fh:
-        doc = yaml.safe_load(fh)
-    for n in doc.get("names", []):
-        if n.get("pattern") == pattern and n.get("color") == color:
-            return {"refraction": n["name"], "name_en": n.get("name_en")}
-    return None  # type known globally but this series does not sell it
+    key = f"{b}-{s}"
+    for e in doc.get("refractions", []):
+        if e.get("pattern") == pattern and e.get("color") == color:
+            n = (e.get("names") or {}).get(key)
+            if n:
+                return {"refraction": n["name"], "name_en": n.get("name_en")}
+            return None  # type known, but this series does not sell it
+    return None
 
 
 def main() -> int:
@@ -80,6 +103,11 @@ def main() -> int:
     if rec.get("pattern") == "平卡":
         print(json.dumps({"matched": False, "refraction": None, "needsReview": False}))
         return 0
+
+    # auto-rebuild the vector store when dicts/*.yml changed
+    sync = ensure_synced(Path(args.dict_dir))
+    if sync != "synced":
+        print(f"[sync] vector store {sync}", file=sys.stderr)
 
     embedder = Embedder()
     threshold = args.threshold if args.threshold is not None else (

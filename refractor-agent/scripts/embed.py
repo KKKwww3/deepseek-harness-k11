@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Build the refractor vector library from the editable dicts.
+"""Build the refractor vector library from the single editable dict.
 
-Scans ``dicts/types.yml`` for the global refractor TYPES (one vector per
-(pattern,color), shared across series) and ``dicts/series/*.yml`` for the
-per-series naming tables. Validates both, embeds every type once, and
-(idempotently) rebuilds the vector store (Supabase pgvector by default).
+Reads ``dicts/refractions.yml`` (one entry per database row), validates it, and
+idempotently rebuilds the vector store (Supabase pgvector by default). Each
+entry's ``pattern`` / ``color`` / ``keywords`` are employee-edited; ``id`` /
+``text`` / ``vector`` are generated here. ``names`` per series are validated to
+reference registered keys but live only in the dict (used by match output).
 
 Exit non-zero on dictionary validation failure.
 """
@@ -17,10 +18,14 @@ from pathlib import Path
 
 import yaml
 
-from refract_store import Embedder, create_store, load_env
+from refract_store import (
+    Embedder,
+    create_store,
+    load_env,
+    write_fingerprint,
+)
 
-TYPES_FILE = "types.yml"
-SERIES_GLOB = "series/*.yml"
+DICT_FILE = "refractions.yml"
 
 
 def load_yaml(path: Path) -> dict:
@@ -31,50 +36,27 @@ def load_yaml(path: Path) -> dict:
     return doc
 
 
-def validate_types(doc: dict, enum: dict[str, list[str]], path: Path) -> list[str]:
+def validate(doc: dict, path: Path) -> list[str]:
+    """Check enum (auto-derived), (pattern,color) uniqueness, keywords, names keys."""
     errors = []
+    entries = doc.get("refractions", [])
     seen: set[tuple[str, str]] = set()
-    for i, t in enumerate(doc.get("types", [])):
-        pat, color = t.get("pattern"), t.get("color")
+    for i, e in enumerate(entries):
+        pat, color = e.get("pattern"), e.get("color")
         key = (pat, color)
         if key in seen:
-            errors.append(f"[{path}] duplicate type (pattern,color)=({pat},{color}) at #{i}")
+            errors.append(f"[{path}] duplicate (pattern,color)=({pat},{color}) at #{i}")
         seen.add(key)
-        if pat not in enum["pattern"]:
-            errors.append(f"[{path}] type #{i} pattern={pat!r} not in controlled enum")
-        if color not in enum["color"]:
-            errors.append(f"[{path}] type #{i} color={color!r} not in controlled enum")
-        if not isinstance(t.get("keywords"), list) or not t["keywords"]:
-            errors.append(f"[{path}] type #{i} needs a non-empty keywords list")
+        if not pat or not color:
+            errors.append(f"[{path}] #{i} needs pattern and color")
+        if not isinstance(e.get("keywords"), list) or not e["keywords"]:
+            errors.append(f"[{path}] #{i} ({pat},{color}) needs non-empty keywords")
+        names = e.get("names") or {}
+        for series_key, n in names.items():
+            if not n.get("name") or not n.get("name_en"):
+                errors.append(f"[{path}] #{i} series '{series_key}' needs name+name_en")
     if not seen:
-        errors.append(f"[{path}] no types defined")
-    return errors
-
-
-def validate_series(paths: list[Path], known: set[tuple[str, str]]) -> list[str]:
-    """Per-series naming tables: every (pattern,color) must exist in types.yml."""
-    errors = []
-    for path in paths:
-        doc = load_yaml(path)
-        for key in ("brand", "series", "names"):
-            if key not in doc:
-                errors.append(f"[{path}] missing top-level '{key}'")
-        seen: set[tuple[str, str]] = set()
-        for i, n in enumerate(doc.get("names", [])):
-            pat, color = n.get("pattern"), n.get("color")
-            key = (pat, color)
-            if key in seen:
-                errors.append(f"[{path}] duplicate (pattern,color)=({pat},{color}) at #{i}")
-            seen.add(key)
-            if key not in known:
-                errors.append(
-                    f"[{path}] #{i} ({pat},{color}) not registered in {TYPES_FILE}"
-                )
-            for field in ("name", "name_en"):
-                if not n.get(field):
-                    errors.append(f"[{path}] #{i} missing '{field}'")
-        if not seen:
-            errors.append(f"[{path}] no names defined")
+        errors.append(f"[{path}] no refractions defined")
     return errors
 
 
@@ -86,13 +68,10 @@ def main() -> int:
 
     load_env()
     dict_dir = Path(args.dict_dir)
-    enum = load_yaml(dict_dir / "enum.yml")
-    types_doc = load_yaml(dict_dir / TYPES_FILE)
-    series_paths = sorted((dict_dir / "series").glob("*.yml"))
+    path = dict_dir / DICT_FILE
+    doc = load_yaml(path)
 
-    errors = validate_types(types_doc, enum, dict_dir / TYPES_FILE)
-    known = {(t["pattern"], t["color"]) for t in types_doc.get("types", [])}
-    errors += validate_series(series_paths, known)
+    errors = validate(doc, path)
     if errors:
         for e in errors:
             print(f"VALIDATION ERROR: {e}", file=sys.stderr)
@@ -102,14 +81,14 @@ def main() -> int:
     print("embedder: " + ("remote" if embedder.remote else "local-fallback (set EMBED_*)"))
 
     rows = []
-    for t in types_doc["types"]:
-        pat, color = t["pattern"], t["color"]
-        text = " ".join([pat, color, *t["keywords"]])
+    for e in doc["refractions"]:
+        pat, color = e["pattern"], e["color"]
+        text = " ".join([pat, color, *e["keywords"]])
         rows.append({
             "id": f"{pat}-{color}",
             "pattern": pat,
             "color": color,
-            "keywords": t["keywords"],
+            "keywords": e["keywords"],
             "text": text,
         })
 
@@ -119,7 +98,8 @@ def main() -> int:
 
     store = create_store(args.db)
     store.reset(rows)
-    print(f"wrote {len(rows)} refraction types -> {store.__class__.__name__}")
+    write_fingerprint(dict_dir)
+    print(f"wrote {len(rows)} refraction entries -> {store.__class__.__name__}")
     return 0
 
 

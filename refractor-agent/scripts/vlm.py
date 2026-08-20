@@ -6,8 +6,9 @@ to ``VLM_BASE_URL``/``VLM_API_KEY``/``VLM_MODEL`` (default model
 ``doubao-seed-2-0-lite-260428``) and returns the structured recognition dict
 ``{pattern, color, brand, series, desc}``.
 
-The controlled pattern/color enum is generated from ``dicts/enum.yml`` at runtime
-so the prompt and the dictionary validation can never drift apart.
+The controlled pattern/color enum is auto-derived from ``dicts/refractions.yml``
+at runtime (every registered pattern/color becomes a prompt choice), so the prompt
+and the dictionary can never drift apart.
 """
 
 from __future__ import annotations
@@ -33,11 +34,28 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def controlled_enum() -> tuple[list[str], list[str]]:
-    """Load pattern/color choices from dicts/enum.yml (single source of truth)."""
-    path = ROOT / "dicts" / "enum.yml"
+    """Derive pattern/color choices from dicts/refractions.yml (auto-enum).
+
+    The legal pattern set = every pattern registered in the dict (+ 平卡/其他);
+    legal colors = every color used (+ 无/其他). Adding a refraction to the dict
+    automatically extends the VLM prompt — no separate enum file to maintain.
+    """
+    path = ROOT / "dicts" / "refractions.yml"
     with path.open(encoding="utf-8") as fh:
         doc = yaml.safe_load(fh)
-    return list(doc["pattern"]), list(doc["color"])
+    patterns, colors = [], []
+    for e in doc.get("refractions", []):
+        if e.get("pattern") not in patterns:
+            patterns.append(e["pattern"])
+        if e.get("color") not in colors:
+            colors.append(e["color"])
+    for sysval in ("平卡", "其他"):
+        if sysval not in patterns:
+            patterns.append(sysval)
+    for sysval in ("无", "其他"):
+        if sysval not in colors:
+            colors.append(sysval)
+    return patterns, colors
 
 
 def build_prompt() -> str:
@@ -52,7 +70,9 @@ def build_prompt() -> str:
         "2. 同图案不同颜色是不同折射，pattern 相同只改 color，绝不合并。\n"
         "3. brand/series 以反面版权文字为准，读不到写 unknown。\n"
         "4. 没有折射写 pattern=平卡、color=无。\n"
-        "5. desc 用一句自由文本描述折射外观（作向量匹配用）。"
+        "5. desc 只描述折射外观本身（图案、颜色、光泽、质地），一句话 10~30 字，"
+        "用于向量匹配；严禁描述卡面人物、球员、球队、文字、logo、背景图案。\n"
+        "6. brand 用小写（如 panini、topps）；series 用简短小写（如 prizm、chrome）。"
     )
 
 

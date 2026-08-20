@@ -25,14 +25,14 @@ whenToUse: 需要把一张卡片的折射外观转成结构化识别结果时。
 
 ## 受控枚举（必须与词典 schema 对齐）
 
-> 权威来源是 `dicts/enum.yml`（单一事实源）；VLM 提示词由它程序化生成，
-> `embed.py` 按它校验。下面这份内联副本必须与 enum.yml 保持一致，改动要同步。
+> 唯一维护文件是 `dicts/refractions.yml`：pattern/color 合法集自动从「已登记的
+> 折射」推导（无需单独枚举文件），VLM 提示词由 `scripts/vlm.py` 运行时生成。
+> **操作前用 read 工具读取 `dicts/refractions.yml`，以读到的最新值为准**——不要凭记忆。
 
-- **pattern（图案）**：`银折` / `碎冰` / `金折` / `绿折` / `橙折` / `紫折` / `现在折射` / `爆金` / `棋盘` / `脉冲` / `平卡` / `其他`。
+- **pattern（图案）**：当前合法集合 = `dicts/refractions.yml` 里已登记折射的 pattern（外加 `平卡` / `其他`）。操作前 read `dicts/refractions.yml`。
   - 只在该系列词典出现的新图案，先记 `其他` + 进 review，不编造新词。
-- **color（颜色）**：`银` / `金` / `红` / `蓝` / `绿` / `橙` / `紫` / `无` / `其他`。
-- **brand / series**：取自 `dicts/schema.md` 里已登记的 `品牌→系列` 清单；
-  不在清单内的记 `unknown`，匹配时无法命名 → 进 review。
+- **color（颜色）**：当前合法集合 = 已登记折射的 color（外加 `无` / `其他`）。
+- **brand / series**：以 `dicts/refractions.yml` 的 `aliases` 段为准；不在别名表内记 `unknown`，匹配时无法命名 → 进 review。
 
 ## 判定规则
 

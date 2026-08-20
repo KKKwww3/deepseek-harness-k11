@@ -1,57 +1,52 @@
 # 折射词典 schema（员工维护）
 
-词典分两层，均在 `dicts/` 下：
+**唯一维护文件：`dicts/refractions.yml`**。一行 = 向量库 `refractor_types` 表里的一条记录。
+改完跑 `python scripts/embed.py` 自动重建向量库（自动校验，报错会说明哪行不对）。
 
-- `enum.yml` —— pattern/color 受控枚举（单一事实源，见下）
-- `types.yml` —— **全局折射类型**：每个 `(pattern, color)` 只登记一次（跨品牌×系列共享），
-  携带 keywords（别名/外观描述，向量匹配用）
-- `series/<brand>-<series>.yml` —— **系列命名表**：本系列有哪些折射 + 对外标准名词
-
-向量只从 `types.yml` 生成（每类型一条），命名从 `series/` 查表。无 `year`：折射规格
-跨年份一致，命名复用所有年份。
-
-## 全局类型表 types.yml
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `pattern` | str | 是 | 图案类型，必须取自受控枚举（enum.yml）|
-| `color` | str | 是 | 颜色，必须取自受控枚举；无则 `无` |
-| `keywords` | list[str] | 是 | 别名/变体/外观描述（各系列叫法都可放这里，向量匹配用）|
-
-约束（embed.py 强校验）：
-1. `(pattern, color)` **全局唯一**；
-2. `pattern` / `color` 必须在 `enum.yml` 内；
-3. 新增折射种类：在 types.yml 登记 + 在需要的系列命名表登记。
-
-## 系列命名表 series/<brand>-<series>.yml
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `brand` | str | 是 | 品牌，小写（`panini` / `topps`）|
-| `series` | str | 是 | 系列，小写（`prizm` / `chrome`）|
-| `names` | list | 是 | 本系列折射的对外叫法，见下 |
-
-name 条目字段：
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `pattern` | str | 是 | 必须已在 types.yml 登记 |
-| `color` | str | 是 | 必须已在 types.yml 登记 |
-| `name` | str | 是 | 标准名词（对外中文，即客户搜索词）|
-| `name_en` | str | 是 | 标准名词（英文）|
-
-约束（embed.py 强校验）：
-1. 同系列内 `(pattern, color)` 必须唯一；
-2. 每个 `(pattern, color)` 必须已在 types.yml 登记（该系列不卖的折射不要登记）。
-
-## 已登记 品牌→系列
+## 一个折射条目
 
 ```yaml
-brand: panini
-series: [prizm]
-brand: topps
-series: [chrome]
+- pattern: 碎冰            # 图案类型（新增即自动成为 VLM 枚举，无需单独维护枚举文件）
+  color: 红                # 颜色（同上）
+  keywords: [碎冰红, 红色碎冰, red ice, ice red]   # 别名/外观描述（向量匹配用，员工维护重点）
+  names:                   # 对外叫法，按品牌×系列（同类型不同系列叫法不同）
+    panini-prizm: {name: 碎冰红, name_en: Red Ice}
+    topps-chrome: {name: 红折, name_en: Red}   # 该系列不卖就不用登记
 ```
 
-> 新增品牌×系列：新建 `series/<brand>-<series>.yml`，并确保其中每个 (pattern,color)
-> 都已在 `types.yml` 登记（未登记的补进 types.yml），embed.py 自动扫描。
+## 各字段
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `pattern` | str | 是 | 图案类型（自动入枚举，含 `平卡`/`其他` 系统值）|
+| `color` | str | 是 | 颜色（自动入枚举，含 `无`/`其他` 系统值）|
+| `keywords` | list[str] | 是 | 别名/变体/外观描述，员工维护重点（向量用）|
+| `names` | dict | 推荐 | key=`品牌-系列`，value=`{name, name_en}`（对外标准名词）|
+
+## 约束（embed.py 强校验）
+
+1. `(pattern, color)` **全局唯一**（同图不同色 = 独立条目，碎冰银/碎冰红/碎冰蓝 各一条）；
+2. `keywords` 非空；
+3. `names` 里每个系列 key 必须给出 `name` 与 `name_en`。
+
+## aliases 段（新增品牌×系列才动）
+
+```yaml
+aliases:
+  brands:
+    panini: [PANINI, Panini, 帕尼尼]
+  series:
+    prizm: [PRIZM, PRIZM BASKETBALL, Prizm Basketball]
+```
+
+把卡片版权文字/常见变体映射到 `names` 的 key。`names` 里用了新 key（如 `panini-prizm`）
+就同时在这里补对应别名。
+
+## 新增一个折射 = 两种方式
+
+1. **手填**：在 `refractions` 里加一个条目（+ 需要的话在 `aliases` 补新品牌/系列），跑 `python scripts/embed.py`；
+2. **命令**：`python scripts/add_type.py --pattern hyper --color 无 --series panini-prizm --name Hyper折 --name-en Hyper --keywords "hyper,海波折"`（自动写文件 + 重建）。
+
+## 已登记的 品牌→系列
+
+`panini-prizm`、`topps-chrome`（见 `names`/`aliases`）。
