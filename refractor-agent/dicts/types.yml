@@ -1,0 +1,37 @@
+# 全局折射类型（跨品牌×系列共享，向量唯一来源）
+#
+# 每个 (pattern, color) 只登记一次。keywords 收集所有系列里该折射的常见叫法/别名
+# 和外观描述（供 embedding 匹配用）；对外标准名词不在本文件，在 series/ 命名表里。
+# 约束（embed.py 强校验）：
+#   - pattern / color 必须在 dicts/enum.yml 受控枚举内；
+#   - (pattern, color) 全局唯一；
+#   - 新增折射种类：在此登记 + 在需要它的系列命名表里登记。
+
+types:
+  - pattern: 碎冰
+    color: 银
+    keywords: [碎冰银, 银色碎冰, silver ice, ice silver, 银色冰裂纹]
+  - pattern: 碎冰
+    color: 红
+    keywords: [碎冰红, 红色碎冰, red ice, ice red, 红色冰裂纹]
+  - pattern: 碎冰
+    color: 蓝
+    keywords: [碎冰蓝, 蓝色碎冰, blue ice, 蓝色冰裂纹]
+  - pattern: 银折
+    color: 银
+    keywords: [银折, 银白折, 普折射, 银白色普通折射, silver, silver refractor, base refractor, silber]
+  - pattern: 银折
+    color: 红
+    keywords: [红折, 红色折射, red, red refractor]
+  - pattern: 银折
+    color: 蓝
+    keywords: [蓝折, 蓝色折射, blue, blue refractor]
+  - pattern: 金折
+    color: 金
+    keywords: [金折, 金折射, 金色折射, gold, gold refractor]
+  - pattern: 现在折射
+    color: 无
+    keywords: [现在折射, now, now refractor]
+  - pattern: 脉冲
+    color: 紫
+    keywords: [紫脉冲, 紫色脉冲, violet prism, prism]

@@ -1,0 +1,33 @@
+# Panini Prizm 折射命名表（员工按实际经营维护）
+#
+# 只负责「本系列有哪些折射 + 对外叫法」。每个 (pattern, color) 必须在
+# dicts/types.yml 里已登记（embed.py 强校验）；同系列内 (pattern, color) 唯一。
+# 无 year：折射规格跨年份一致，命名复用所有年份。
+
+brand: panini
+series: prizm
+names:
+  - pattern: 银折
+    color: 银
+    name: 银折
+    name_en: Silver
+  - pattern: 碎冰
+    color: 银
+    name: 碎冰银
+    name_en: Ice Silver
+  - pattern: 碎冰
+    color: 红
+    name: 碎冰红
+    name_en: Red Ice
+  - pattern: 碎冰
+    color: 蓝
+    name: 碎冰蓝
+    name_en: Blue Ice
+  - pattern: 金折
+    color: 金
+    name: 金折
+    name_en: Gold
+  - pattern: 现在折射
+    color: 无
+    name: 现在折射
+    name_en: Now

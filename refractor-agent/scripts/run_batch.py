@@ -102,7 +102,7 @@ def main() -> int:
             )
             result = json.loads(out.stdout)
             record = {"itemId": item["id"], **{k: rec.get(k) for k in
-                      ("brand", "series", "year", "pattern", "color", "desc")}, **result}
+                      ("brand", "series", "pattern", "color", "desc")}, **result}
             with res_path.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(record, ensure_ascii=False) + "\n")
             ok += 1

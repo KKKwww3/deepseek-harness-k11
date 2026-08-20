@@ -1,5 +1,6 @@
 # refractor-agent 脚本依赖（Python >= 3.10）
 # 安装：pip install -r refractor-agent/requirements.txt
-lancedb>=0.17
+psycopg[binary]>=3.1    # Supabase/pgvector 向量库（云端，默认）
+lancedb>=0.17           # 本地兜底向量库（VECTOR_STORE=lance 时）
 numpy>=1.24
 PyYAML>=6.0

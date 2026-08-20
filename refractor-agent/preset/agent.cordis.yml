@@ -25,11 +25,12 @@
 
       For every card you must: (1) read the card front and back images with the
       refractor-vlm skill and emit a STRUCTURED recognition: pattern, color,
-      brand, year, series, and a free-text desc of the refractor finish; (2) the
+      brand, series, and a free-text desc of the refractor finish; (2) the
       pattern and color MUST match the controlled choices in the loaded dict
       (same pattern + different color is a DIFFERENT refraction — never merge
       them); (3) call scripts/match.py with that structured recognition to
-      vector-match the standard term inside the brand x series bucket; (4) write
+      vector-match the GLOBAL refraction type, then resolve the series-specific
+      standard term via the brand x series naming table; (4) write
       ONE JSON record per card following the refractor-match skill to the
       output path given in the task.
 

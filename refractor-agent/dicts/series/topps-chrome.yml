@@ -1,0 +1,29 @@
+# Topps Chrome 折射命名表（员工按实际经营维护）
+#
+# 只负责「本系列有哪些折射 + 对外叫法」。每个 (pattern, color) 必须在
+# dicts/types.yml 里已登记（embed.py 强校验）；同系列内 (pattern, color) 唯一。
+# 无 year：折射规格跨年份一致，命名复用所有年份。
+
+brand: topps
+series: chrome
+names:
+  - pattern: 银折
+    color: 银
+    name: 普折射
+    name_en: Refractor
+  - pattern: 银折
+    color: 红
+    name: 红折
+    name_en: Red
+  - pattern: 银折
+    color: 蓝
+    name: 蓝折
+    name_en: Blue
+  - pattern: 金折
+    color: 金
+    name: 金折射
+    name_en: Gold
+  - pattern: 脉冲
+    color: 紫
+    name: 紫脉冲
+    name_en: Violet Prism

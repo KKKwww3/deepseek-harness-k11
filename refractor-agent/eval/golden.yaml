@@ -4,6 +4,7 @@
 # - rec 字段 = 预录的 VLM 结构化识别，供匹配层（--mode match）离线评测；
 # - front/back 字段 = 卡片图片路径（相对 images_root），供全链路（--mode live）评测；
 # - expected.refraction = null 表示平卡（无折射）。
+# - 无 year：折射规格跨年份一致。
 #
 # 种子样例为合成识别结果（便于离线跑通）；真实卡图与真实识别请按需补充，
 # 目标是每系列 ≥ 20 条。
@@ -11,66 +12,66 @@
 images_root: eval/images
 
 cases:
-  # ── Panini Prizm 2022 ────────────────────────────────────────────────────
+  # ── Panini Prizm ─────────────────────────────────────────────────────────
   - id: prizm-001
     front: images/prizm-001-front.jpg
     back: images/prizm-001-back.jpg
-    expected: {refraction: 碎冰红, pattern: 碎冰, color: 红, brand: panini, series: prizm, year: 2022}
-    rec: {pattern: 碎冰, color: 红, brand: panini, year: 2022, series: prizm, desc: 红色水晶裂纹状折射，光线下反光}
+    expected: {refraction: 碎冰红, pattern: 碎冰, color: 红, brand: panini, series: prizm}
+    rec: {pattern: 碎冰, color: 红, brand: panini, series: prizm, desc: 红色水晶裂纹状折射，光线下反光}
   - id: prizm-002
     front: images/prizm-002-front.jpg
     back: images/prizm-002-back.jpg
-    expected: {refraction: 碎冰银, pattern: 碎冰, color: 银, brand: panini, series: prizm, year: 2022}
-    rec: {pattern: 碎冰, color: 银, brand: panini, year: 2022, series: prizm, desc: 银色细碎冰裂纹，很闪}
+    expected: {refraction: 碎冰银, pattern: 碎冰, color: 银, brand: panini, series: prizm}
+    rec: {pattern: 碎冰, color: 银, brand: panini, series: prizm, desc: 银色细碎冰裂纹，很闪}
   - id: prizm-003
     front: images/prizm-003-front.jpg
     back: images/prizm-003-back.jpg
-    expected: {refraction: 金折, pattern: 金折, color: 金, brand: panini, series: prizm, year: 2022}
-    rec: {pattern: 金折, color: 金, brand: panini, year: 2022, series: prizm, desc: 金色折射，整体金光}
+    expected: {refraction: 金折, pattern: 金折, color: 金, brand: panini, series: prizm}
+    rec: {pattern: 金折, color: 金, brand: panini, series: prizm, desc: 金色折射，整体金光}
   - id: prizm-004
     front: images/prizm-004-front.jpg
     back: images/prizm-004-back.jpg
-    expected: {refraction: 银折, pattern: 银折, color: 银, brand: panini, series: prizm, year: 2022}
-    rec: {pattern: 银折, color: 银, brand: panini, year: 2022, series: prizm, desc: 银色普通折射}
+    expected: {refraction: 银折, pattern: 银折, color: 银, brand: panini, series: prizm}
+    rec: {pattern: 银折, color: 银, brand: panini, series: prizm, desc: 银色普通折射}
   - id: prizm-005
     front: images/prizm-005-front.jpg
     back: images/prizm-005-back.jpg
-    expected: {refraction: 碎冰蓝, pattern: 碎冰, color: 蓝, brand: panini, series: prizm, year: 2022}
-    rec: {pattern: 碎冰, color: 蓝, brand: panini, year: 2022, series: prizm, desc: 蓝色碎冰裂纹折射}
+    expected: {refraction: 碎冰蓝, pattern: 碎冰, color: 蓝, brand: panini, series: prizm}
+    rec: {pattern: 碎冰, color: 蓝, brand: panini, series: prizm, desc: 蓝色碎冰裂纹折射}
   - id: prizm-006
     front: images/prizm-006-front.jpg
     back: images/prizm-006-back.jpg
-    expected: {refraction: 现在折射, pattern: 现在折射, color: 无, brand: panini, series: prizm, year: 2022}
-    rec: {pattern: 现在折射, color: 无, brand: panini, year: 2022, series: prizm, desc: NOW 折射}
+    expected: {refraction: 现在折射, pattern: 现在折射, color: 无, brand: panini, series: prizm}
+    rec: {pattern: 现在折射, color: 无, brand: panini, series: prizm, desc: NOW 折射}
   - id: prizm-007
     front: images/prizm-007-front.jpg
     back: images/prizm-007-back.jpg
-    expected: {refraction: null, pattern: 平卡, color: 无, brand: panini, series: prizm, year: 2022}
-    rec: {pattern: 平卡, color: 无, brand: panini, year: 2022, series: prizm, desc: 普通平卡无折射}
+    expected: {refraction: null, pattern: 平卡, color: 无, brand: panini, series: prizm}
+    rec: {pattern: 平卡, color: 无, brand: panini, series: prizm, desc: 普通平卡无折射}
 
-  # ── Topps Chrome 2023 ────────────────────────────────────────────────────
+  # ── Topps Chrome ─────────────────────────────────────────────────────────
   - id: chrome-001
     front: images/chrome-001-front.jpg
     back: images/chrome-001-back.jpg
-    expected: {refraction: 普折射, pattern: 银折, color: 银, brand: topps, series: chrome, year: 2023}
-    rec: {pattern: 银折, color: 银, brand: topps, year: 2023, series: chrome, desc: 银白色普通折射}
+    expected: {refraction: 普折射, pattern: 银折, color: 银, brand: topps, series: chrome}
+    rec: {pattern: 银折, color: 银, brand: topps, series: chrome, desc: 银白色普通折射}
   - id: chrome-002
     front: images/chrome-002-front.jpg
     back: images/chrome-002-back.jpg
-    expected: {refraction: 金折射, pattern: 金折, color: 金, brand: topps, series: chrome, year: 2023}
-    rec: {pattern: 金折, color: 金, brand: topps, year: 2023, series: chrome, desc: 金色折射条}
+    expected: {refraction: 金折射, pattern: 金折, color: 金, brand: topps, series: chrome}
+    rec: {pattern: 金折, color: 金, brand: topps, series: chrome, desc: 金色折射条}
   - id: chrome-003
     front: images/chrome-003-front.jpg
     back: images/chrome-003-back.jpg
-    expected: {refraction: 紫脉冲, pattern: 脉冲, color: 紫, brand: topps, series: chrome, year: 2023}
-    rec: {pattern: 脉冲, color: 紫, brand: topps, year: 2023, series: chrome, desc: 紫色脉冲波状折射}
+    expected: {refraction: 紫脉冲, pattern: 脉冲, color: 紫, brand: topps, series: chrome}
+    rec: {pattern: 脉冲, color: 紫, brand: topps, series: chrome, desc: 紫色脉冲波状折射}
   - id: chrome-004
     front: images/chrome-004-front.jpg
     back: images/chrome-004-back.jpg
-    expected: {refraction: 蓝折, pattern: 银折, color: 蓝, brand: topps, series: chrome, year: 2023}
-    rec: {pattern: 银折, color: 蓝, brand: topps, year: 2023, series: chrome, desc: 蓝色折射}
+    expected: {refraction: 蓝折, pattern: 银折, color: 蓝, brand: topps, series: chrome}
+    rec: {pattern: 银折, color: 蓝, brand: topps, series: chrome, desc: 蓝色折射}
   - id: chrome-005
     front: images/chrome-005-front.jpg
     back: images/chrome-005-back.jpg
-    expected: {refraction: null, pattern: 平卡, color: 无, brand: topps, series: chrome, year: 2023}
-    rec: {pattern: 平卡, color: 无, brand: topps, year: 2023, series: chrome, desc: 普通平卡无折射}
+    expected: {refraction: null, pattern: 平卡, color: 无, brand: topps, series: chrome}
+    rec: {pattern: 平卡, color: 无, brand: topps, series: chrome, desc: 普通平卡无折射}

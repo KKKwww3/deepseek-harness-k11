@@ -20,11 +20,12 @@ from pathlib import Path
 
 import yaml
 
-from match import best_match, query_text
+from match import best_type, query_text, series_name
 from refract_store import (
+    BaseStore,
     Embedder,
-    Store,
-    bucket_rows,
+    cosine,
+    create_store,
     load_env,
     LOCAL_THRESHOLD,
     REMOTE_THRESHOLD,
@@ -33,6 +34,7 @@ from vlm import recognize
 
 DEFAULT_GOLDEN = Path(__file__).resolve().parent.parent / "eval" / "golden.yaml"
 DEFAULT_OUT = Path(__file__).resolve().parent.parent / "eval" / "out"
+DICT_DIR = Path(__file__).resolve().parent.parent / "dicts"
 SWEEP_STEPS = [round(0.50 + 0.05 * i, 2) for i in range(10)]  # 0.50..0.95
 
 
@@ -44,27 +46,6 @@ def load_cases(golden: Path, images_root: Path) -> list[dict]:
         c["images_root"] = images_root
         cases.append(c)
     return cases
-
-
-def run_match(rec: dict, rows: list[dict], embedder: Embedder, store: Store,
-              threshold: float) -> dict:
-    """Same matching logic as scripts/match.py (kept here to avoid subprocess)."""
-    if rec.get("pattern") == "平卡":
-        return {"matched": False, "refraction": None, "needsReview": False}
-    qv = embedder.embed([query_text(rec)])[0]
-
-    def rank(candidates):
-        return [(store.cosine(qv, r["vector"]), r) for r in candidates]
-
-    bucket = bucket_rows(rows, rec.get("brand", ""), rec.get("series", ""))
-    out = None
-    if bucket:
-        out = best_match(rank(bucket), threshold) or best_match(rank(rows), threshold)
-    else:
-        out = best_match(rank(rows), threshold)
-    if out is None:
-        out = {"matched": False, "needsReview": True}
-    return out
 
 
 def prepare(cases: list[dict], mode: str, embedder: Embedder) -> list[dict]:
@@ -94,26 +75,25 @@ def prepare(cases: list[dict], mode: str, embedder: Embedder) -> list[dict]:
     return prepared
 
 
-def run_match_prepared(item: dict, rows: list[dict], store: Store, threshold: float) -> dict:
-    """Match using a precomputed query vector (``qv``)."""
+def run_match_prepared(item: dict, rows: list[dict], store: BaseStore,
+                       threshold: float) -> dict:
+    """Match using a precomputed query vector (``qv``): global type match +
+    series naming lookup (same logic as scripts/match.py)."""
     rec = item.get("rec")
     if rec is None:
         return {"error": item.get("error", "no rec")}
     if rec.get("pattern") == "平卡":
         return {"matched": False, "refraction": None, "needsReview": False}
 
-    def rank(candidates):
-        return [(store.cosine(item["qv"], r["vector"]), r) for r in candidates]
+    scores = [(cosine(item["qv"], r["vector"]), r) for r in rows]
+    typ = best_type(scores, threshold)
+    if typ is None:
+        return {"matched": False, "needsReview": True}
 
-    bucket = bucket_rows(rows, rec.get("brand", ""), rec.get("series", ""))
-    out = None
-    if bucket:
-        out = best_match(rank(bucket), threshold) or best_match(rank(rows), threshold)
-    else:
-        out = best_match(rank(rows), threshold)
-    if out is None:
-        out = {"matched": False, "needsReview": True}
-    return out
+    naming = series_name(rec, typ["pattern"], typ["color"], DICT_DIR)
+    if naming is None:
+        return {**typ, "refraction": None, "needsReview": True}
+    return {**typ, **naming, "needsReview": False}
 
 
 def effective_threshold(args_threshold: float | None, embedder: Embedder) -> float:
@@ -133,12 +113,12 @@ def case_images(case: dict) -> list[Path]:
     return paths
 
 
-def aggregate(prepared: list[dict], rows: list[dict], store: Store,
+def aggregate(prepared: list[dict], rows: list[dict], store: BaseStore,
               threshold: float) -> tuple[dict, list[dict], dict]:
     """Run matching over prepared cases at one threshold and aggregate metrics."""
     details: list[dict] = []
     confusion: dict[str, dict[str, int]] = {}
-    det_c = term_c = pattern_c = color_c = bucket_c = 0
+    det_c = term_c = pattern_c = color_c = series_c = 0
     non_plain = predicted_terms = review = total = 0
 
     for item in prepared:
@@ -177,13 +157,13 @@ def aggregate(prepared: list[dict], rows: list[dict], store: Store,
                 color_ok = pred.get("color") == expected["color"]
                 color_c += int(color_ok)
                 fields["color"] = color_ok
-            # bucket accuracy: does the RECOGNITION self-determine the right
-            # brand x series? (match output carries no brand/series)
+            # series accuracy: does the RECOGNITION self-determine the right
+            # brand x series? (that decides which naming table to look up)
             if expected.get("brand") is not None and expected.get("series") is not None:
-                bucket_ok = (rec.get("brand"), rec.get("series")) == (
+                series_ok = (rec.get("brand"), rec.get("series")) == (
                     expected["brand"], expected["series"])
-                bucket_c += int(bucket_ok)
-                fields["bucket"] = bucket_ok
+                series_c += int(series_ok)
+                fields["series"] = series_ok
         if pred.get("needsReview"):
             review += 1
         fields["review"] = bool(pred.get("needsReview"))
@@ -205,7 +185,7 @@ def aggregate(prepared: list[dict], rows: list[dict], store: Store,
         "term_acc": pct(term_c, non_plain),
         "pattern_acc": pct(pattern_c, non_plain),
         "color_acc": pct(color_c, non_plain),
-        "bucket_acc": pct(bucket_c, non_plain),
+        "series_acc": pct(series_c, non_plain),
         "review_rate": pct(review, total),
         "precision": pct(term_c, predicted_terms),
         "recall": pct(term_c, non_plain),
@@ -221,7 +201,7 @@ def print_metrics(m: dict) -> None:
 
     print("=" * 46)
     print(f"  total cases      : {m['total']}")
-    for k in ("det_acc", "term_acc", "pattern_acc", "color_acc", "bucket_acc"):
+    for k in ("det_acc", "term_acc", "pattern_acc", "color_acc", "series_acc"):
         print(f"  {k:<18}: {fmt(m.get(k))}")
     print(f"  review_rate      : {fmt(m.get('review_rate'))}")
     print(f"  precision        : {fmt(m.get('precision'))}")
@@ -253,7 +233,7 @@ def main() -> int:
 
     load_env()
     embedder = Embedder()
-    store = Store(args.db)
+    store = create_store(args.db)
     rows = store.rows()
     if not rows:
         raise SystemExit("empty store; run scripts/embed.py first")

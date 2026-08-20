@@ -41,12 +41,10 @@ cases:
       color: 红
       brand: panini
       series: prizm
-      year: 2022
     rec:                        # 可选：预录的 VLM 识别结果（匹配层评测用）
       pattern: 碎冰
       color: 红
       brand: panini
-      year: 2022
       series: prizm
       desc: 红色水晶裂纹状折射，光线下反光
 ```
@@ -63,7 +61,7 @@ cases:
 | `det_acc` | 判定「有折射/平卡」是否正确（refraction 非空 vs null） |
 | `term_acc` | 非平卡中，预测 `refraction` 与期望**标准名词完全一致**的比例 |
 | `pattern_acc` / `color_acc` | 图案 / 颜色字段正确率 |
-| `bucket_acc` | brand+series 自判定正确率 |
+| `series_acc` | brand+series 自判定正确率（决定命名查哪张表）|
 | `review_rate` | 被标记 needsReview 的比例（期望低：表示大多直接命中） |
 | `precision` | 返回了名词的项中，正确的比例（越少瞎猜越好） |
 | `recall` | 应有名词的项中，正确返回的比例（越少漏掉越好） |

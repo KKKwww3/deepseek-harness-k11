@@ -4,7 +4,7 @@
 Sends the card front+back images (as base64 data URIs) plus a strict-JSON prompt
 to ``VLM_BASE_URL``/``VLM_API_KEY``/``VLM_MODEL`` (default model
 ``doubao-seed-2-0-lite-260428``) and returns the structured recognition dict
-``{pattern, color, brand, year, series, desc}``.
+``{pattern, color, brand, series, desc}``.
 
 The controlled pattern/color enum is generated from ``dicts/enum.yml`` at runtime
 so the prompt and the dictionary validation can never drift apart.
@@ -45,12 +45,12 @@ def build_prompt() -> str:
     return (
         "你是球星卡折射识别助手。请根据下面的卡片正面+反面图片，输出一段严格的 JSON"
         "（不要夹带任何其他文字，不要用 Markdown 围栏）：\n"
-        '{"pattern":"...","color":"...","brand":"...","year":"...","series":"...","desc":"..."}\n'
+        '{"pattern":"...","color":"...","brand":"...","series":"...","desc":"..."}\n'
         "规则：\n"
         f"1. pattern 图案类型与 color 颜色取自受控枚举：图案[{ '/'.join(patterns) }]，"
         f"颜色[{ '/'.join(colors) }]。\n"
         "2. 同图案不同颜色是不同折射，pattern 相同只改 color，绝不合并。\n"
-        "3. brand/year/series 以反面版权文字为准，读不到写 unknown。\n"
+        "3. brand/series 以反面版权文字为准，读不到写 unknown。\n"
         "4. 没有折射写 pattern=平卡、color=无。\n"
         "5. desc 用一句自由文本描述折射外观（作向量匹配用）。"
     )

@@ -14,8 +14,8 @@
 步骤：
 1. 用 glob 列出该目录下的图片，分辨出正面图与反面图（通常各一张）。
 2. 用 refractor-vlm 技能同时看正/反面，识别折射外观，必须输出结构化
-   { pattern, color, brand, year, series, desc }。图案与颜色取自受控枚举；
-   brand/year/series 以反面版权信息为准。
+   { pattern, color, brand, series, desc }。图案与颜色取自受控枚举；
+   brand/series 以反面版权信息为准。
 3. 同图案不同颜色是不同折射（碎冰银/碎冰红/碎冰蓝各自独立），不要合并。
 4. 调用 scripts/match.py，传入该结构化识别结果做向量匹配，得到标准名词。
 5. 按 refractor-match 技能把结果写成一条 JSON，用 write 工具写入 {out_path}。

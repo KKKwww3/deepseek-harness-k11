@@ -1,14 +1,18 @@
 """Shared vector store + embedder for refractor-agent.
 
 Production uses the Volcano Ark multimodal embeddings endpoint
-(``EMBED_BASE_URL`` / ``EMBED_API_KEY`` / ``EMBED_MODEL``) and stores vectors in a
-LanceDB database (the "external vector library"). When no embeddings endpoint is
-configured the scripts fall back to a deterministic local hasher so dict
-validation and the matching logic stay runnable offline.
+(``EMBED_BASE_URL`` / ``EMBED_API_KEY`` / ``EMBED_MODEL``). Vectors live in an
+external store selected by ``VECTOR_STORE``:
 
-The multimodal endpoint returns ONE vector per request (the whole ``input`` list
-is treated as one multimodal document), so ``embed()`` issues one request per
-text — dicts are small (tens of entries), so this is fine.
+- ``pgvector`` (default): a Supabase/Postgres table (cloud-durable; the whole
+  dictionary could be rebuilt, but the store survives local disk loss and hosts
+  future non-regenerable data). Configured via ``SUPABASE_DB_URL``.
+- ``lance``: local LanceDB file (``db/refractors.lance``), used as offline
+  fallback when no Supabase URL is configured.
+
+The multimodal embedding endpoint returns ONE vector per request (the whole
+``input`` list is treated as one multimodal document), so ``embed()`` issues one
+request per text — dicts are small (tens of entries), so this is fine.
 
 Deployment-varying values come from the environment (no hardcoded tunables).
 """
@@ -26,12 +30,16 @@ from typing import Any, Sequence
 
 import numpy as np
 
-TABLE = "refractors"
+TABLE = "refractor_types"
 LOCAL_DIM = 256
+# Remote embedding dimension. doubao-embedding-vision-251215 supports MRL
+# (dimensions param); 1024 stays under pgvector's 2000-dim HNSW/ivfflat cap while
+# keeping quality. Must match the vector column in PgStore.DDL.
+REMOTE_DIM_DEFAULT = 1024
 # cosine thresholds: calibrated for doubao-embedding-vision-251215 on the seed
-# golden set (sweep: perfect at 0.50-0.70, drops at 0.75+ because borderline
-# bucket matches fall back to the full library and cross-series terms win; re-run
-# `evaluate.py --sweep` after enlarging the golden set with real VLM recs).
+# golden set (sweep: perfect at 0.50-0.70, drops at 0.75+ where borderline
+# matches no longer clear the bar; re-run `evaluate.py --sweep` after enlarging
+# the golden set with real VLM recs).
 REMOTE_THRESHOLD = 0.70
 LOCAL_THRESHOLD = 0.5
 
@@ -74,6 +82,15 @@ def load_env() -> None:
                 os.environ[key] = value
 
 
+def cosine(a: Sequence[float], b: Sequence[float]) -> float:
+    x = np.asarray(a, dtype=float)
+    y = np.asarray(b, dtype=float)
+    denom = float(np.linalg.norm(x) * np.linalg.norm(y))
+    if denom == 0.0:
+        return 0.0
+    return float(np.dot(x, y) / denom)
+
+
 class Embedder:
     def __init__(self) -> None:
         base = _env("EMBED_BASE_URL", "OPENAI_BASE_URL")
@@ -83,10 +100,19 @@ class Embedder:
         self._base = (base or "").rstrip("/")
         self._key = key or ""
         self._model = model
+        try:
+            self._dims = int(_env("EMBED_DIMENSIONS") or REMOTE_DIM_DEFAULT)
+        except ValueError:
+            self._dims = REMOTE_DIM_DEFAULT
 
     @property
     def remote(self) -> bool:
         return self._remote
+
+    @property
+    def dimensions(self) -> int:
+        """Requested remote embedding dimension (used by the pgvector DDL)."""
+        return self._dims
 
     def embed(self, texts: Sequence[str]) -> list[list[float]]:
         if self._remote:
@@ -98,7 +124,8 @@ class Embedder:
         # the whole list is embedded as one document -> one vector per call.
         url = self._base + "/embeddings/multimodal"
         payload = json.dumps(
-            {"model": self._model, "input": [{"type": "text", "text": text}]}
+            {"model": self._model, "dimensions": self._dims,
+             "input": [{"type": "text", "text": text}]}
         ).encode("utf-8")
         req = urllib.request.Request(
             url,
@@ -137,8 +164,21 @@ class Embedder:
         return [x / norm for x in vec]
 
 
-class Store:
-    """LanceDB-backed durable store for refraction term vectors."""
+# ── vector stores ──────────────────────────────────────────────────────────────
+
+class BaseStore:
+    """Minimal store contract used by embed/match/evaluate/run_batch."""
+
+    def reset(self, rows: list[dict[str, Any]]) -> None:
+        """Idempotent rebuild: each row needs a ``vector`` list[float]."""
+        raise NotImplementedError
+
+    def rows(self) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
+
+class LanceStore(BaseStore):
+    """Local LanceDB-backed store (offline fallback, VECTOR_STORE=lance)."""
 
     def __init__(self, db_path: str) -> None:
         import lancedb
@@ -146,7 +186,6 @@ class Store:
         self._db = lancedb.connect(db_path)
 
     def reset(self, rows: list[dict[str, Any]]) -> None:
-        """Idempotent rebuild: each row needs a ``vector`` list[float]."""
         self._db.create_table(TABLE, data=rows, mode="overwrite")
 
     def rows(self) -> list[dict[str, Any]]:
@@ -156,24 +195,120 @@ class Store:
         except Exception:
             return []
 
-    @staticmethod
-    def cosine(a: Sequence[float], b: Sequence[float]) -> float:
-        x = np.asarray(a, dtype=float)
-        y = np.asarray(b, dtype=float)
-        denom = float(np.linalg.norm(x) * np.linalg.norm(y))
-        if denom == 0.0:
-            return 0.0
-        return float(np.dot(x, y) / denom)
+
+class PgStore(BaseStore):
+    """Supabase/Postgres + pgvector store (VECTOR_STORE=pgvector, default).
+
+    Durable in the cloud: the vector column survives local disk loss. The table
+    schema and HNSW index are created idempotently on first ``reset``. The
+    vector column dimension follows EMBED_DIMENSIONS (HNSW caps at 2000 dims).
+    Rows are GLOBAL refractor types (one per pattern+color, no brand/series).
+    """
+
+    def __init__(self, dsn: str | None = None, dim: int | None = None) -> None:
+        import psycopg
+
+        self._dsn = dsn or _env("SUPABASE_DB_URL")
+        if not self._dsn:
+            raise RuntimeError(
+                "pgvector store needs SUPABASE_DB_URL (or pass dsn to create_store)"
+            )
+        self._psycopg = psycopg
+        try:
+            self._dim = dim or int(_env("EMBED_DIMENSIONS") or REMOTE_DIM_DEFAULT)
+        except ValueError:
+            self._dim = REMOTE_DIM_DEFAULT
+        self._ddl = [
+            "CREATE EXTENSION IF NOT EXISTS vector",
+            f"""CREATE TABLE IF NOT EXISTS {TABLE} (
+                id       TEXT PRIMARY KEY,
+                pattern  TEXT NOT NULL,
+                color    TEXT NOT NULL,
+                keywords JSONB,
+                text     TEXT,
+                vector   VECTOR({self._dim})
+            )""",
+        ]
+
+    def _connect(self):
+        return self._psycopg.connect(self._dsn)
+
+    def _ensure_schema(self, conn, create_index: bool = False) -> None:
+        with conn.cursor() as cur:
+            for stmt in self._ddl:
+                cur.execute(stmt)
+            if create_index:
+                cur.execute(
+                    f"CREATE INDEX IF NOT EXISTS {TABLE}_vector_hnsw "
+                    f"ON {TABLE} USING hnsw (vector vector_cosine_ops)"
+                )
+        conn.commit()
+
+    def reset(self, rows: list[dict[str, Any]]) -> None:
+        if not rows:
+            return
+        with self._connect() as conn:
+            self._ensure_schema(conn)
+            with conn.cursor() as cur:
+                cur.execute(f"DELETE FROM {TABLE}")
+                for r in rows:
+                    cur.execute(
+                        f"""INSERT INTO {TABLE}
+                            (id, pattern, color, keywords, text, vector)
+                            VALUES (%s,%s,%s,%s::jsonb,%s,%s::vector)""",
+                        (
+                            r["id"], r["pattern"], r["color"],
+                            json.dumps(r.get("keywords", []), ensure_ascii=False),
+                            r.get("text", ""), json.dumps(r["vector"]),
+                        ),
+                    )
+            conn.commit()
+
+    def rows(self) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            self._ensure_schema(conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""SELECT id, pattern, color, keywords, text, vector::text AS vector
+                        FROM {TABLE}"""
+                )
+                cols = [d.name for d in cur.description]
+                out = []
+                for rec in cur.fetchall():
+                    row = dict(zip(cols, rec))
+                    row["vector"] = json.loads(row["vector"])
+                    # psycopg3 decodes jsonb to a Python list already
+                    if row.get("keywords") is not None and isinstance(row["keywords"], str):
+                        row["keywords"] = json.loads(row["keywords"])
+                    out.append(row)
+        return out
 
 
-def bucket_rows(rows: list[dict[str, Any]], brand: str, series: str) -> list[dict[str, Any]]:
-    return [r for r in rows if r["brand"] == brand and r["series"] == series]
+def create_store(db_path: str | None = None, dsn: str | None = None) -> BaseStore:
+    """Build the configured store: pgvector by default, lance as fallback.
+
+    ``VECTOR_STORE`` env selects explicitly (``pgvector`` / ``lance`` / a DSN);
+    otherwise pgvector wins when a Supabase URL is configured, else lance.
+    """
+    default_db = str(Path(__file__).parent.parent / "db" / "refractors.lance")
+    vs = _env("VECTOR_STORE")
+    if vs:
+        vs = vs.strip().lower()
+        if vs == "lance":
+            return LanceStore(db_path or default_db)
+        if vs == "pgvector":
+            return PgStore(dsn or _env("SUPABASE_DB_URL"))
+        return PgStore(vs)  # explicit DSN value
+    if dsn or _env("SUPABASE_DB_URL"):
+        return PgStore(dsn)
+    return LanceStore(db_path or default_db)
 
 
 def main() -> int:  # convenience: source the environment and report mode
     load_env()
     e = Embedder()
     print("embedder: " + ("remote" if e.remote else "local-fallback (set EMBED_*)"))
+    print("store: " + type(create_store()).__name__)
     return 0
 
 
