@@ -10,7 +10,7 @@ whenToUse: 拿到一张卡的折射识别结果，需要滑动到标准专业名
 
 1. 把 refractor-vlm 的结构化识别 JSON（pattern / color / brand / year / series / desc）
    交给 `scripts/match.py`（参数见下），程序会：embedding → 缩到品牌×系列桶 → 相似度匹配 → 返回标准名词。
-2. 匹配分 ≥ 阈值（默认 0.85）→ 直接采纳。
+2. 匹配分 ≥ 阈值（默认 0.70，可 `--threshold` 覆盖；已按当前 embedding 模型校准）→ 直接采纳。
 3. 匹配分 < 阈值 或 未命中 → 把桶外扩到全量再匹配一次；仍低于阈值 → `needsReview: true`。
 4. `pattern=平卡` → `refraction: null`，不算失败，不走匹配。
 

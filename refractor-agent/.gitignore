@@ -2,3 +2,10 @@
 db/
 __pycache__/
 *.pyc
+
+# 敏感配置：密钥一律走 .env，不入库
+.env
+
+# 评估产物：金标图片（有版权）与评估输出不入库
+eval/images/
+eval/out/

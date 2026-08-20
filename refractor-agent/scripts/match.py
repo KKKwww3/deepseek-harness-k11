@@ -15,7 +15,7 @@ import json
 import sys
 from pathlib import Path
 
-from refract_store import Embedder, Store, bucket_rows, LOCAL_THRESHOLD, REMOTE_THRESHOLD
+from refract_store import Embedder, Store, bucket_rows, load_env, LOCAL_THRESHOLD, REMOTE_THRESHOLD
 
 
 def query_text(rec: dict) -> str:
@@ -42,6 +42,8 @@ def main() -> int:
     args = ap.parse_args()
 
     rec = json.loads(args.rec)
+
+    load_env()
 
     # a plain card is not a refraction and not a failure
     if rec.get("pattern") == "平卡":

@@ -1,0 +1,5 @@
+# refractor-agent 脚本依赖（Python >= 3.10）
+# 安装：pip install -r refractor-agent/requirements.txt
+lancedb>=0.17
+numpy>=1.24
+PyYAML>=6.0

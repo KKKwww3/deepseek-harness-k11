@@ -15,9 +15,10 @@ from pathlib import Path
 
 import yaml
 
-from refract_store import Embedder, Store
+from refract_store import Embedder, Store, load_env
 
 DICT_GLOB = "dicts/*.yml"
+ENUM_FILE = "enum.yml"
 
 
 def load_dicts(dict_dir: Path) -> list[dict]:
@@ -32,7 +33,17 @@ def load_dicts(dict_dir: Path) -> list[dict]:
     return dicts
 
 
-def validate(doc: dict) -> list[str]:
+def load_enum(dict_dir: Path) -> dict[str, list[str]]:
+    """Load the controlled pattern/color enum (dicts/enum.yml)."""
+    path = dict_dir / ENUM_FILE
+    with path.open(encoding="utf-8") as fh:
+        doc = yaml.safe_load(fh)
+    if not isinstance(doc, dict) or "pattern" not in doc or "color" not in doc:
+        raise SystemExit(f"{path} must define pattern and color lists")
+    return doc
+
+
+def validate(doc: dict, enum: dict[str, list[str]]) -> list[str]:
     """Return a list of validation errors (empty means valid)."""
     errors = []
     for key in ("brand", "series", "year", "refractions"):
@@ -54,6 +65,16 @@ def validate(doc: dict) -> list[str]:
                 errors.append(f"[{doc.get('_file')}] refraction #{i} missing '{field}'")
         if not isinstance(refr.get("keywords"), list):
             errors.append(f"[{doc.get('_file')}] refraction #{i} 'keywords' must be a list")
+        if refr.get("pattern") not in enum["pattern"]:
+            errors.append(
+                f"[{doc.get('_file')}] refraction #{i} pattern={refr.get('pattern')!r} "
+                f"not in controlled enum (see dicts/enum.yml)"
+            )
+        if refr.get("color") not in enum["color"]:
+            errors.append(
+                f"[{doc.get('_file')}] refraction #{i} color={refr.get('color')!r} "
+                f"not in controlled enum (see dicts/enum.yml)"
+            )
     return errors
 
 
@@ -61,18 +82,19 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--dict-dir", default=str(Path(__file__).parent.parent / "dicts"))
     ap.add_argument("--db", default=str(Path(__file__).parent.parent / "db" / "refractors.lance"))
-    ap.add_argument("--dim", type=int, default=256)
     args = ap.parse_args()
 
+    load_env()
     dict_dir = Path(args.dict_dir)
     dicts = load_dicts(dict_dir)
     if not dicts:
         print(f"no dicts found under {dict_dir}", file=sys.stderr)
         return 1
 
+    enum = load_enum(dict_dir)
     all_errors: list[str] = []
     for doc in dicts:
-        all_errors.extend(validate(doc))
+        all_errors.extend(validate(doc, enum))
     if all_errors:
         for e in all_errors:
             print(f"VALIDATION ERROR: {e}", file=sys.stderr)

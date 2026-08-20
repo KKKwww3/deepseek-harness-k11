@@ -7,7 +7,7 @@ refractions:
     name_en: Refractor
     pattern: 银折
     color: 银
-    keywords: [普折射, refractor, base refractor, silver]
+    keywords: [普折射, 普通折射, refractor, base refractor, silver]
   - name: 金折射
     name_en: Gold
     pattern: 金折
