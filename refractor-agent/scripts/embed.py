@@ -81,6 +81,7 @@ def main() -> int:
     print("embedder: " + ("remote" if embedder.remote else "local-fallback (set EMBED_*)"))
 
     rows = []
+    names_rows = []
     for e in doc["refractions"]:
         pat, color = e["pattern"], e["color"]
         text = " ".join([pat, color, *e["keywords"]])
@@ -91,6 +92,12 @@ def main() -> int:
             "keywords": e["keywords"],
             "text": text,
         })
+        for series_key, n in (e.get("names") or {}).items():
+            brand, series = series_key.split("-", 1)
+            names_rows.append({
+                "brand": brand, "series": series, "pattern": pat, "color": color,
+                "name": n["name"], "name_en": n.get("name_en"),
+            })
 
     vecs = embedder.embed([r["text"] for r in rows])
     for r, v in zip(rows, vecs):
@@ -98,8 +105,10 @@ def main() -> int:
 
     store = create_store(args.db)
     store.reset(rows)
+    store.reset_names(names_rows)
     write_fingerprint(dict_dir)
-    print(f"wrote {len(rows)} refraction entries -> {store.__class__.__name__}")
+    print(f"wrote {len(rows)} refraction entries + {len(names_rows)} series names "
+          f"-> {store.__class__.__name__}")
     return 0
 
 

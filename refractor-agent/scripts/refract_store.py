@@ -166,6 +166,9 @@ class Embedder:
 
 # ── vector stores ──────────────────────────────────────────────────────────────
 
+NAMES_TABLE = "refraction_names"
+
+
 class BaseStore:
     """Minimal store contract used by embed/match/evaluate/run_batch."""
 
@@ -175,6 +178,25 @@ class BaseStore:
 
     def rows(self) -> list[dict[str, Any]]:
         raise NotImplementedError
+
+    def reset_names(self, names: list[dict[str, Any]]) -> None:
+        """Idempotent rebuild of the series-naming table."""
+        raise NotImplementedError
+
+    def names_for(self, brand: str, series: str, pattern: str, color: str) -> dict | None:
+        """Return ``{'name':..., 'name_en':...}`` for a refraction in a series, else None."""
+        raise NotImplementedError
+
+    def top1(self, qv: list[float]) -> tuple[float, dict] | None:
+        """Highest-similarity refraction as ``(cosine_score, row)``, or None when empty.
+
+        Default implementation scans all rows in Python (used by the local
+        backend); ``PgStore`` overrides it with a server-side pgvector search.
+        """
+        rows = self.rows()
+        if not rows:
+            return None
+        return max((cosine(qv, r["vector"]), r) for r in rows)
 
 
 class LanceStore(BaseStore):
@@ -195,6 +217,20 @@ class LanceStore(BaseStore):
         except Exception:
             return []
 
+    def reset_names(self, names: list[dict[str, Any]]) -> None:
+        self._db.create_table(NAMES_TABLE, data=names, mode="overwrite")
+
+    def names_for(self, brand: str, series: str, pattern: str, color: str) -> dict | None:
+        try:
+            rows = self._db.open_table(NAMES_TABLE).to_arrow().to_pylist()
+        except Exception:
+            return None
+        for r in rows:
+            if (r.get("brand") == brand and r.get("series") == series
+                    and r.get("pattern") == pattern and r.get("color") == color):
+                return {"name": r["name"], "name_en": r.get("name_en")}
+        return None
+
 
 class PgStore(BaseStore):
     """Supabase/Postgres + pgvector store (VECTOR_STORE=pgvector, default).
@@ -202,7 +238,8 @@ class PgStore(BaseStore):
     Durable in the cloud: the vector column survives local disk loss. The table
     schema and HNSW index are created idempotently on first ``reset``. The
     vector column dimension follows EMBED_DIMENSIONS (HNSW caps at 2000 dims).
-    Rows are GLOBAL refractor types (one per pattern+color, no brand/series).
+    Rows are GLOBAL refractor types (one per pattern+color, no brand/series). The
+    ``refraction_names`` table stores the brand/series-specific output names.
     """
 
     def __init__(self, dsn: str | None = None, dim: int | None = None) -> None:
@@ -227,6 +264,15 @@ class PgStore(BaseStore):
                 keywords JSONB,
                 text     TEXT,
                 vector   VECTOR({self._dim})
+            )""",
+            f"""CREATE TABLE IF NOT EXISTS {NAMES_TABLE} (
+                brand    TEXT NOT NULL,
+                series   TEXT NOT NULL,
+                pattern  TEXT NOT NULL,
+                color    TEXT NOT NULL,
+                name     TEXT NOT NULL,
+                name_en  TEXT,
+                PRIMARY KEY (brand, series, pattern, color)
             )""",
         ]
 
@@ -282,6 +328,56 @@ class PgStore(BaseStore):
                         row["keywords"] = json.loads(row["keywords"])
                     out.append(row)
         return out
+
+    def reset_names(self, names: list[dict[str, Any]]) -> None:
+        with self._connect() as conn:
+            self._ensure_schema(conn)
+            with conn.cursor() as cur:
+                cur.execute(f"DELETE FROM {NAMES_TABLE}")
+                for r in names:
+                    cur.execute(
+                        f"""INSERT INTO {NAMES_TABLE}
+                            (brand, series, pattern, color, name, name_en)
+                            VALUES (%s,%s,%s,%s,%s,%s)""",
+                        (r["brand"], r["series"], r["pattern"], r["color"],
+                         r["name"], r.get("name_en")),
+                    )
+            conn.commit()
+
+    def names_for(self, brand: str, series: str, pattern: str, color: str) -> dict | None:
+        with self._connect() as conn:
+            self._ensure_schema(conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""SELECT name, name_en FROM {NAMES_TABLE}
+                        WHERE brand=%s AND series=%s AND pattern=%s AND color=%s""",
+                    (brand, series, pattern, color),
+                )
+                rec = cur.fetchone()
+        if rec is None:
+            return None
+        return {"name": rec[0], "name_en": rec[1]}
+
+    def top1(self, qv: list[float]) -> tuple[float, dict] | None:
+        """Server-side cosine search: pgvector ``<=>`` distance over the table.
+
+        Only the single highest-similarity row is returned (never the whole
+        table), so the match path does not pull all vectors into Python.
+        """
+        with self._connect() as conn:
+            self._ensure_schema(conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""SELECT pattern, color, 1 - (vector <=> %s::vector) AS sim
+                        FROM {TABLE}
+                        ORDER BY vector <=> %s::vector
+                        LIMIT 1""",
+                    (json.dumps(qv), json.dumps(qv)),
+                )
+                rec = cur.fetchone()
+        if rec is None:
+            return None
+        return (float(rec[2]), {"pattern": rec[0], "color": rec[1]})
 
 
 def create_store(db_path: str | None = None, dsn: str | None = None) -> BaseStore:

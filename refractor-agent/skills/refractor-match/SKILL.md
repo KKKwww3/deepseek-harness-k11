@@ -10,7 +10,7 @@ whenToUse: 拿到一张卡的折射识别结果，需要滑动到标准专业名
 
 1. 把 refractor-vlm 的结构化识别 JSON（pattern / color / brand / series / desc）
    交给 `scripts/match.py`：程序会 embedding → **全局类型匹配**（向量库存的是
-   跨系列共享的折射类型，每类型一条）→ **按 brand×series 查命名表** → 返回该系列的标准名词。
+   共享的折射类型，每类型一条）→ **从数据库 `refraction_names` 按 brand×series×pattern×color 查询** → 返回该系列的标准名词。
 2. 匹配分 ≥ 阈值（默认 0.70，可 `--threshold` 覆盖；已按当前 embedding 模型校准）→ 直接采纳。
 3. 匹配分 < 阈值 → `needsReview: true`。
 4. 类型命中但该系列命名表里没有（品牌/系列 unknown，或该系列不卖这种折）→ `needsReview: true`。

@@ -24,7 +24,6 @@ from match import best_type, query_text, series_name
 from refract_store import (
     BaseStore,
     Embedder,
-    cosine,
     create_store,
     ensure_synced,
     load_env,
@@ -76,22 +75,20 @@ def prepare(cases: list[dict], mode: str, embedder: Embedder) -> list[dict]:
     return prepared
 
 
-def run_match_prepared(item: dict, rows: list[dict], store: BaseStore,
-                       threshold: float) -> dict:
-    """Match using a precomputed query vector (``qv``): global type match +
-    series naming lookup (same logic as scripts/match.py)."""
+def run_match_prepared(item: dict, store: BaseStore, threshold: float) -> dict:
+    """Match a prepared case: server-side top1 hit + series naming lookup
+    (same logic as scripts/match.py)."""
     rec = item.get("rec")
     if rec is None:
         return {"error": item.get("error", "no rec")}
     if rec.get("pattern") == "平卡":
         return {"matched": False, "refraction": None, "needsReview": False}
 
-    scores = [(cosine(item["qv"], r["vector"]), r) for r in rows]
-    typ = best_type(scores, threshold)
+    typ = best_type(item.get("hit"), threshold)
     if typ is None:
         return {"matched": False, "needsReview": True}
 
-    naming = series_name(rec, typ["pattern"], typ["color"], DICT_DIR)
+    naming = series_name(rec, typ["pattern"], typ["color"], store)
     if naming is None:
         return {**typ, "refraction": None, "needsReview": True}
     return {**typ, **naming, "needsReview": False}
@@ -114,7 +111,7 @@ def case_images(case: dict) -> list[Path]:
     return paths
 
 
-def aggregate(prepared: list[dict], rows: list[dict], store: BaseStore,
+def aggregate(prepared: list[dict], store: BaseStore,
               threshold: float) -> tuple[dict, list[dict], dict]:
     """Run matching over prepared cases at one threshold and aggregate metrics."""
     details: list[dict] = []
@@ -126,7 +123,7 @@ def aggregate(prepared: list[dict], rows: list[dict], store: BaseStore,
         total += 1
         case = item["case"]
         expected = case.get("expected", {})
-        pred = run_match_prepared(item, rows, store, threshold)
+        pred = run_match_prepared(item, store, threshold)
         if "error" in pred:
             details.append({"id": case["id"], "error": pred["error"], "stage": "recognize"})
             continue
@@ -239,9 +236,6 @@ def main() -> int:
         print(f"[sync] vector store {sync}", file=sys.stderr)
     embedder = Embedder()
     store = create_store(args.db)
-    rows = store.rows()
-    if not rows:
-        raise SystemExit("empty store; run scripts/embed.py first")
     golden = Path(args.golden)
     images_root = Path(args.images_root) if args.images_root else golden.parent
     cases = load_cases(golden, images_root)
@@ -252,10 +246,15 @@ def main() -> int:
     # recognize + embed every query once; thresholds only re-rank
     prepared = prepare(cases, args.mode, embedder)
 
+    # server-side top1 per case (one DB query each); reused across thresholds
+    for item in prepared:
+        if "qv" in item:
+            item["hit"] = store.top1(item["qv"])
+
     if args.sweep:
         print(f"{'thr':>5} {'term_acc':>9} {'review_rate':>11} {'recall':>7}")
         for t in SWEEP_STEPS:
-            m, _, _ = aggregate(prepared, rows, store, t)
+            m, _, _ = aggregate(prepared, store, t)
             ta = m["term_acc"] if m["term_acc"] is not None else float("nan")
             rr = m["review_rate"] if m["review_rate"] is not None else float("nan")
             rc = m["recall"] if m["recall"] is not None else float("nan")
@@ -263,7 +262,7 @@ def main() -> int:
         return 0
 
     threshold = effective_threshold(args.threshold, embedder)
-    metrics, details, confusion = aggregate(prepared, rows, store, threshold)
+    metrics, details, confusion = aggregate(prepared, store, threshold)
     print_metrics(metrics)
     write_outputs(Path(args.out), metrics, details, confusion)
     print(f"detail rows -> {Path(args.out) / 'errors.jsonl'}")

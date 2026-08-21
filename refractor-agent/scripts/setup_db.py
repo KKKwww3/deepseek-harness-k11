@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Initialize the pgvector store schema (extension, table, HNSW index).
+"""Initialize the pgvector store schema (extension, vector table, naming table, HNSW index).
 
 Idempotent: safe to run repeatedly. Only relevant for VECTOR_STORE=pgvector;
 a no-op message is printed when the lance fallback is active.
@@ -14,7 +14,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from refract_store import TABLE, PgStore, create_store, load_env
+from refract_store import TABLE, NAMES_TABLE, PgStore, create_store, load_env
 
 DDL_INDEX = (
     f"CREATE INDEX IF NOT EXISTS {TABLE}_vector_hnsw "
@@ -25,7 +25,7 @@ DDL_INDEX = (
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--dsn", default=None, help="override SUPABASE_DB_URL")
-    ap.add_argument("--drop", action="store_true", help="drop the table first")
+    ap.add_argument("--drop", action="store_true", help="drop the tables first")
     args = ap.parse_args()
 
     load_env()
@@ -38,10 +38,11 @@ def main() -> int:
         if args.drop:
             with conn.cursor() as cur:
                 cur.execute(f"DROP TABLE IF EXISTS {TABLE}")
+                cur.execute(f"DROP TABLE IF EXISTS {NAMES_TABLE}")
             conn.commit()
-            print(f"dropped table {TABLE}")
+            print(f"dropped tables {TABLE}, {NAMES_TABLE}")
         store._ensure_schema(conn, create_index=True)
-    print(f"pgvector schema ready: extension + table {TABLE} + HNSW index")
+    print(f"pgvector schema ready: extension + tables {TABLE}/{NAMES_TABLE} + HNSW index")
     return 0
 
 

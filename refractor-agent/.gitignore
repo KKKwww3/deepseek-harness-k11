@@ -1,6 +1,17 @@
-# 本地测试卡图（不入库）
-1.jpg
-2.jpg
+# 本地虚拟环境与运行产物
+.venv/
+db/
+__pycache__/
+*.pyc
+
+# 敏感配置
+.env
+
+# 评估产物
+eval/images/
+eval/out/
+
+# 本地测试卡图
 *.jpg
 *.jpeg
 *.png

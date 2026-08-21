@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """VLM refraction recognition via the Volcano Ark Responses API.
 
-Sends the card front+back images (as base64 data URIs) plus a strict-JSON prompt
-to ``VLM_BASE_URL``/``VLM_API_KEY``/``VLM_MODEL`` (default model
+Sends the card front+back images plus a strict-JSON prompt to
+``VLM_BASE_URL``/``VLM_API_KEY``/``VLM_MODEL`` (default model
 ``doubao-seed-2-0-lite-260428``) and returns the structured recognition dict
 ``{pattern, color, brand, series, desc}``.
+
+Images may be local file paths, http(s) URLs, data: URIs, or raw base64 (any
+mix) — each is normalized by ``to_image_url``.
 
 The controlled pattern/color enum is auto-derived from ``dicts/refractions.yml``
 at runtime (every registered pattern/color becomes a prompt choice), so the prompt
@@ -76,10 +79,54 @@ def build_prompt() -> str:
     )
 
 
+def _sniff_mime(data: bytes) -> str | None:
+    """Detect image MIME from content magic bytes (trust content, not extension)."""
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
 def data_uri(path: Path) -> str:
-    mime = MIME.get(path.suffix.lower(), "application/octet-stream")
-    b64 = base64.b64encode(path.read_bytes()).decode("ascii")
+    data = path.read_bytes()
+    mime = _sniff_mime(data) or MIME.get(path.suffix.lower(), "application/octet-stream")
+    b64 = base64.b64encode(data).decode("ascii")
     return f"data:{mime};base64,{b64}"
+
+
+def to_image_url(source: str | Path) -> str:
+    """Normalize any image input to an ``image_url`` the VLM API accepts.
+
+    Accepts (auto-detected):
+      - local file path        -> base64 data URI (MIME sniffed from content)
+      - http(s):// URL         -> passed through as-is (VLM server fetches it)
+      - data: URI              -> passed through as-is
+      - raw base64             -> wrapped as ``data:<sniffed-mime>;base64,...``
+    A missing local path raises instead of being misread as base64.
+    """
+    s = str(source).strip()
+    if s.startswith(("http://", "https://")):
+        return s
+    if s.startswith("data:"):
+        return s
+    p = Path(s)
+    if p.is_file():
+        return data_uri(p)
+    # last resort: raw base64 — but fail loudly if it is not valid base64
+    try:
+        data = base64.b64decode(s, validate=True)
+    except Exception as exc:  # noqa: BLE001 - any decode failure means bad input
+        raise ValueError(
+            f"image input is neither an existing file, http(s) URL, data: URI, "
+            f"nor valid base64: {s[:60]!r}"
+        ) from exc
+    mime = _sniff_mime(data) or "application/octet-stream"
+    return f"data:{mime};base64,{s}"
 
 
 def _req_env(name: str) -> str:
@@ -89,15 +136,19 @@ def _req_env(name: str) -> str:
     return value
 
 
-def recognize(images: list[Path]) -> dict[str, Any]:
-    """Recognize card images into a structured refraction dict."""
+def recognize(images: list[str | Path]) -> dict[str, Any]:
+    """Recognize card images into a structured refraction dict.
+
+    Each item may be a local path, an http(s) URL, a data: URI, or raw base64
+    (see ``to_image_url``).
+    """
     load_env()
     base = _req_env("VLM_BASE_URL").rstrip("/")
     key = _req_env("VLM_API_KEY")
     model = os.environ.get("VLM_MODEL") or DEFAULT_MODEL
 
     content: list[dict] = [{"type": "input_text", "text": build_prompt()}]
-    content += [{"type": "input_image", "image_url": data_uri(p)} for p in images]
+    content += [{"type": "input_image", "image_url": to_image_url(p)} for p in images]
     payload = json.dumps(
         {"model": model, "input": [{"role": "user", "content": content}], "temperature": 0}
     ).encode("utf-8")
@@ -140,8 +191,9 @@ def _extract_text(body: dict) -> str:
 
 
 if __name__ == "__main__":
-    imgs = [Path(p) for p in sys.argv[1:]]
+    imgs = sys.argv[1:]
     if not imgs:
         print("usage: python vlm.py <front> [back ...]")
+        print("  each item: local path | http(s):// URL | data: URI | base64")
         sys.exit(2)
     print(json.dumps(recognize(imgs), ensure_ascii=False))

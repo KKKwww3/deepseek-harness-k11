@@ -21,7 +21,7 @@
 | 项 | 决策 |
 |---|---|
 | Agent 形态 | **独立新 Agent**，先独立产出，确认效果好后再对接 `card-agent` |
-| 匹配方式 | **纯文本向量语义匹配**：查询 = `pattern + color + desc`；向量库存**全局折射类型**（每类型一条），再按 品牌×系列 查命名表出标准名词 |
+| 匹配方式 | **纯文本向量语义匹配**：查询 = `pattern + color + desc`；**Supabase pgvector 服务端检索**（`<=>` 余弦）返回 top1 命中，再从数据库 `refraction_names` 按 品牌×系列 查标准名词；本地 LanceDB 兜底时才在 Python 内比对 |
 | embedding 模型 | **火山方舟 `doubao-embedding-vision-251215`**（OpenAI 兼容多模态端点，**1024 维**，MRL 降维以适配 pgvector HNSW 的 2000 维上限） |
 | 图片是否入向量 | **否**。图片只用于 VLM 识别，不做图片 embedding——实拍光线/角度/颜色漂移大，且同卡复售概率低；折射关键词足以区分 |
 | VLM 模型 | **火山方舟 `doubao-seed-2-0-lite-260428`**（`/api/v3/responses`，本地图走 base64 data URI） |
@@ -30,7 +30,7 @@
 | VLM 输出 | **强制含「图案 + 颜色」结构化属性**，确保同图案不同颜色可区分 |
 | 受控枚举 | **自动推导**：pattern/color 合法集 = `dicts/refractions.yml` 已登记折射的取值（+平卡/其他、无/其他），无需单独枚举文件 |
 | 输入 | 卡片正面 + 反面原图 → VLM 识别输出文字信息 |
-| 向量库落盘 | **外部向量库**：**Supabase pgvector**（云端持久，`VECTOR_STORE=pgvector`，表 `refractor_types`）；`VECTOR_STORE=lance` 可切本地 LanceDB 兜底。`embed.py` 幂等重建 |
+| 向量库落盘 | **外部向量库**：**Supabase pgvector**（云端持久，`VECTOR_STORE=pgvector`，表 `refractor_types` + 命名表 `refraction_names`）；`VECTOR_STORE=lance` 可切本地 LanceDB 兜底。`embed.py` 幂等重建 |
 | 效果度量 | **金标集 + `scripts/evaluate.py`**（见 `eval/README.md`），达门槛后才对接 card-agent |
 | 首版覆盖 | **Panini Prizm + Topps Chrome** 起步，跑通 schema 后按需扩展 |
 
@@ -46,19 +46,19 @@ refractor-agent/
 ├── skills/                  识别技能（源文件，按需拷入项目 .dsh/skills/）
 │   ├── refractor-vlm/       VLM 识别指引：强制图案+颜色结构化 + 自判定品牌/系列
 │   └── refractor-match/     全局类型匹配 + 系列命名、置信度与 review 规则
-├── dicts/                   员工维护的词典（单文件）
-│   ├── refractions.yml      折射词典（一行 = 一条数据库记录，员工唯一维护文件）
+├── dicts/                   员工维护的词典（单文件构建源）
+│   ├── refractions.yml      折射词典（生成向量表与命名表）
 │   └── schema.md            词典字段规范（本文档详述）
 ├── eval/
 │   ├── README.md            效果评估设计文档
 │   ├── golden.yaml          金标数据集（每系列 ≥ 20 条目标）
 │   └── images/              金标图片（不入库，.gitignore 忽略）
 ├── scripts/
-│   ├── refract_store.py     向量库（pgvector/lance 双后端）+ Embedder + .env 加载
-│   ├── setup_db.py          初始化 pgvector：扩展 + 表 + HNSW 索引（幂等）
+│   ├── refract_store.py     向量库与命名表（pgvector/lance 双后端）+ Embedder + .env 加载
+│   ├── setup_db.py          初始化 pgvector：扩展 + 向量表 + 命名表 + HNSW 索引（幂等）
 │   ├── vlm.py               VLM 识别（Responses API，枚举由 refractions.yml 自动推导）
-│   ├── embed.py             refractions.yml → 生成向量 → 写入向量库（幂等重建 + 校验）
-│   ├── match.py             文字描述 → embedding → 类型匹配 + 系列命名 → 标准名词
+│   ├── embed.py             refractions.yml → 生成向量与命名记录 → 写入数据库（幂等重建 + 校验）
+│   ├── match.py             文字描述 → embedding → 类型匹配 + 数据库系列命名 → 标准名词
 │   ├── add_type.py          一键登记新折射（自动写单文件 + 重建）
 │   ├── evaluate.py          金标集评测 + 阈值校准（见 eval/README.md）
 │   └── run_batch.py         批量：一批卡片 → VLM 文本 → 匹配 → 结果/review
@@ -79,8 +79,9 @@ refractor-agent/
         "desc":    "红色水晶裂纹状折射"  # 自由外观描述（向量用）
       }
   → [embed] pattern+color+desc → embedding 向量
-  → 折射类型向量匹配（向量库 = dicts/refractions.yml，每折射一条）
-  → 按 brand × series 查系列命名表 → 该系列的标准名词（如 panini 的 "碎冰红 Red Ice"）
+  → 折射类型向量匹配（数据库 `refractor_types`，每折射一条）
+  → 查询数据库 `refraction_names`（brand × series × pattern × color）
+  → 该系列的标准名词（如 panini 的 "碎冰红 Red Ice"）
   → 输出 {brand, series, refraction, name_en, pattern, color, matchScore}
   → 低置信 / 类型未命中 / 命名表查不到 → 写入 review 清单，标记 needsReview
 ```
@@ -105,8 +106,8 @@ refractions:
 约定：
 - **一行一折射**：`(pattern, color)` 唯一（同图不同色 = 独立条目，碎冰银/碎冰红/碎冰蓝 各一条）。
 - **枚举自动推导**：VLM 的 pattern/color 合法集 = 已登记折射的取值（+平卡/其他、无/其他），无单独枚举文件。
-- **命名按系列**：`names` 里该系列没登记 = 该系列不卖这种折 → 匹配时进 review。品牌/系列由 VLM 纯文本稳定返回（脚本小写 + 去空白归一化），无需别名表。
-- `embed.py` 幂等重建：全量覆盖，保证词典改动后向量不含脏数据；改完只需跑一次。
+- **命名按系列**：`names` 由 `embed.py` 展开写入数据库 `refraction_names`；运行时按 brand × series × pattern × color 查询。该系列没登记 = 该系列不卖这种折 → 匹配时进 review。品牌/系列由 VLM 纯文本稳定返回（脚本小写 + 去空白归一化），无需别名表。
+- **`embed.py` 幂等重建**：全量覆盖 `refractor_types` 与 `refraction_names`，保证词典改动后运行时数据库不含脏数据；改完只需跑一次。
 
 ## 输出规范
 

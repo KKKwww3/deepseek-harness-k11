@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Match a refractor recognition to the standard industry name.
 
-Query text = ``pattern + color + desc``. The vector library holds one vector per
-registered refraction (``dicts/refractions.yml``), so matching is a single
-cosine search. After the best match clears the threshold, the ``names`` section
-maps it to the customer-facing term for that brand x series (same refractor,
-different series = different name, e.g. 银折 vs 普折射).
+Query text = ``pattern + color + desc``. The vector table holds one vector per
+registered refraction (``refractor_types``), so matching is a single cosine
+search. With the pgvector store the search runs **server-side** (``<=>``) and
+only the top hit is returned. After the best match clears the threshold, the
+series naming table (``refraction_names``) maps the brand x series to the
+customer-facing term (same refractor, different series = different name,
+e.g. 银折 vs 普折射).
 
 Prints a single JSON object to stdout.
 """
@@ -17,11 +19,8 @@ import json
 import sys
 from pathlib import Path
 
-import yaml
-
 from refract_store import (
     Embedder,
-    cosine,
     create_store,
     ensure_synced,
     load_env,
@@ -29,17 +28,10 @@ from refract_store import (
     REMOTE_THRESHOLD,
 )
 
-DICT_FILE = "refractions.yml"
-
 
 def norm(s: str) -> str:
-    """Lowercase, strip, and collapse inner whitespace (for alias lookup)."""
+    """Lowercase, strip, and collapse inner whitespace."""
     return " ".join(s.strip().lower().split())
-
-
-def load_dict(dict_dir: Path) -> dict:
-    with (dict_dir / DICT_FILE).open(encoding="utf-8") as fh:
-        return yaml.safe_load(fh) or {}
 
 
 def query_text(rec: dict) -> str:
@@ -47,21 +39,22 @@ def query_text(rec: dict) -> str:
     return " ".join(p for p in parts if p)
 
 
-def best_type(scores: list[tuple[float, dict]], threshold: float) -> dict | None:
-    if not scores:
+def best_type(hit: tuple[float, dict] | None, threshold: float) -> dict | None:
+    """Turn a store ``top1`` hit into the match result dict (or None below threshold)."""
+    if hit is None:
         return None
-    score, row = max(scores, key=lambda t: t[0])
+    score, row = hit
     if score < threshold:
         return None
     return {"matched": True, "pattern": row["pattern"], "color": row["color"],
             "matchScore": round(score, 4)}
 
 
-def series_name(rec: dict, pattern: str, color: str, dict_dir: Path) -> dict | None:
-    """Look up the customer-facing name in this brand x series from the single dict.
+def series_name(rec: dict, pattern: str, color: str, store) -> dict | None:
+    """Look up the customer-facing name for this brand x series in the DB.
 
     brand/series come from the VLM as stable text (panini/prizm); we only
-    lowercase + collapse whitespace defensively before joining the names key.
+    lowercase + collapse whitespace defensively before querying.
     """
     brand, series = rec.get("brand"), rec.get("series")
     if not brand or not series:
@@ -70,15 +63,10 @@ def series_name(rec: dict, pattern: str, color: str, dict_dir: Path) -> dict | N
     s = norm(series) or None
     if not b or not s:
         return None
-    key = f"{b}-{s}"
-    doc = load_dict(dict_dir)
-    for e in doc.get("refractions", []):
-        if e.get("pattern") == pattern and e.get("color") == color:
-            n = (e.get("names") or {}).get(key)
-            if n:
-                return {"refraction": n["name"], "name_en": n.get("name_en")}
-            return None  # type known, but this series does not sell it
-    return None
+    naming = store.names_for(b, s, pattern, color)
+    if naming is None:
+        return None
+    return {"refraction": naming["name"], "name_en": naming.get("name_en")}
 
 
 def main() -> int:
@@ -109,20 +97,18 @@ def main() -> int:
         REMOTE_THRESHOLD if embedder.remote else LOCAL_THRESHOLD)
 
     store = create_store(args.db)
-    rows = store.rows()
-    if not rows:
+    qv = embedder.embed([query_text(rec)])[0]
+    hit = store.top1(qv)
+    if hit is None:
         print("empty store; run scripts/embed.py first", file=sys.stderr)
         return 1
 
-    qv = embedder.embed([query_text(rec)])[0]
-    scores = [(cosine(qv, r["vector"]), r) for r in rows]
-    typ = best_type(scores, threshold)
-
+    typ = best_type(hit, threshold)
     if typ is None:
         print(json.dumps({"matched": False, "needsReview": True}))
         return 0
 
-    naming = series_name(rec, typ["pattern"], typ["color"], Path(args.dict_dir))
+    naming = series_name(rec, typ["pattern"], typ["color"], store)
     if naming is None:
         # type matched, but we cannot name it for this series (unknown brand/series
         # or the series does not sell this refractor) -> needs review
