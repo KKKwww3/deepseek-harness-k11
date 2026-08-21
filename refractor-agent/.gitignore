@@ -1,11 +1,7 @@
-# 生成产物：向量库由 embed.py 重建，缓存脚本产物不入库
-db/
-__pycache__/
-*.pyc
-
-# 敏感配置：密钥一律走 .env，不入库
-.env
-
-# 评估产物：金标图片（有版权）与评估输出不入库
-eval/images/
-eval/out/
+# 本地测试卡图（不入库）
+1.jpg
+2.jpg
+*.jpg
+*.jpeg
+*.png
+*.webp
