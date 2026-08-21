@@ -100,17 +100,12 @@ refractions:
     names:                   # 对外叫法，按品牌×系列
       panini-prizm: {name: 碎冰红, name_en: Red Ice}
       topps-chrome: {name: 红折, name_en: Red}
-aliases:                     # 版权文字 → names 的 key（新增品牌×系列才动）
-  brands:
-    panini: [PANINI, Panini]
-  series:
-    prizm: [PRIZM, PRIZM BASKETBALL]
 ```
 
 约定：
 - **一行一折射**：`(pattern, color)` 唯一（同图不同色 = 独立条目，碎冰银/碎冰红/碎冰蓝 各一条）。
 - **枚举自动推导**：VLM 的 pattern/color 合法集 = 已登记折射的取值（+平卡/其他、无/其他），无单独枚举文件。
-- **命名按系列**：`names` 里该系列没登记 = 该系列不卖这种折 → 匹配时进 review。
+- **命名按系列**：`names` 里该系列没登记 = 该系列不卖这种折 → 匹配时进 review。品牌/系列由 VLM 纯文本稳定返回（脚本小写 + 去空白归一化），无需别名表。
 - `embed.py` 幂等重建：全量覆盖，保证词典改动后向量不含脏数据；改完只需跑一次。
 
 ## 输出规范

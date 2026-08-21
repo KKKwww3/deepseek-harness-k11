@@ -32,7 +32,7 @@ whenToUse: 需要把一张卡片的折射外观转成结构化识别结果时。
 - **pattern（图案）**：当前合法集合 = `dicts/refractions.yml` 里已登记折射的 pattern（外加 `平卡` / `其他`）。操作前 read `dicts/refractions.yml`。
   - 只在该系列词典出现的新图案，先记 `其他` + 进 review，不编造新词。
 - **color（颜色）**：当前合法集合 = 已登记折射的 color（外加 `无` / `其他`）。
-- **brand / series**：以 `dicts/refractions.yml` 的 `aliases` 段为准；不在别名表内记 `unknown`，匹配时无法命名 → 进 review。
+- **brand / series**：VLM 纯文本识别稳定返回（小写，如 `panini`/`prizm`），脚本会自动小写 + 去空白归一化；无法判定时记 `unknown`，匹配时无法命名 → 进 review。
 
 ## 判定规则
 

@@ -70,12 +70,3 @@ refractions:
     keywords: [hyper折, hyper, hyper refractor, 海波折, 炫彩折射, 全息彩虹折射]
     names:
       panini-prizm: {name: Hyper折, name_en: Hyper}
-
-# ── 品牌/系列别名（把卡片版权文字/变体映射到 names 的 key，新增系列才动）─
-aliases:
-  brands:
-    panini: [PANINI, Panini, 帕尼尼]
-    topps: [TOPPS, Topps, 托普斯]
-  series:
-    prizm: [PRIZM, Prizm, PRIZM BASKETBALL, Prizm Basketball, prizm basketball]
-    chrome: [CHROME, Topps Chrome, topps chrome, CHROME BASEBALL, Chrome Baseball, chrome baseball]

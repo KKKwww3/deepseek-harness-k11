@@ -42,15 +42,6 @@ def load_dict(dict_dir: Path) -> dict:
         return yaml.safe_load(fh) or {}
 
 
-def alias_map(doc: dict, group: str) -> dict[str, str]:
-    """{normalized alias: canonical key} for brands or series."""
-    out: dict[str, str] = {}
-    for canon, aliases in (doc.get("aliases", {}).get(group) or {}).items():
-        for a in [canon, *(aliases or [])]:
-            out[norm(a)] = canon
-    return out
-
-
 def query_text(rec: dict) -> str:
     parts = [rec.get("pattern", ""), rec.get("color", ""), rec.get("desc", "")]
     return " ".join(p for p in parts if p)
@@ -67,16 +58,20 @@ def best_type(scores: list[tuple[float, dict]], threshold: float) -> dict | None
 
 
 def series_name(rec: dict, pattern: str, color: str, dict_dir: Path) -> dict | None:
-    """Look up the customer-facing name in this brand x series from the single dict."""
+    """Look up the customer-facing name in this brand x series from the single dict.
+
+    brand/series come from the VLM as stable text (panini/prizm); we only
+    lowercase + collapse whitespace defensively before joining the names key.
+    """
     brand, series = rec.get("brand"), rec.get("series")
     if not brand or not series:
         return None
-    doc = load_dict(dict_dir)
-    b = alias_map(doc, "brands").get(norm(brand), norm(brand)) or None
-    s = alias_map(doc, "series").get(norm(series), norm(series)) or None
+    b = norm(brand) or None
+    s = norm(series) or None
     if not b or not s:
         return None
     key = f"{b}-{s}"
+    doc = load_dict(dict_dir)
     for e in doc.get("refractions", []):
         if e.get("pattern") == pattern and e.get("color") == color:
             n = (e.get("names") or {}).get(key)

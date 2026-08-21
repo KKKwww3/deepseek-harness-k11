@@ -29,24 +29,15 @@
 2. `keywords` 非空；
 3. `names` 里每个系列 key 必须给出 `name` 与 `name_en`。
 
-## aliases 段（新增品牌×系列才动）
-
-```yaml
-aliases:
-  brands:
-    panini: [PANINI, Panini, 帕尼尼]
-  series:
-    prizm: [PRIZM, PRIZM BASKETBALL, Prizm Basketball]
-```
-
-把卡片版权文字/常见变体映射到 `names` 的 key。`names` 里用了新 key（如 `panini-prizm`）
-就同时在这里补对应别名。
+> `names` 的 key 用 `品牌-系列` 小写（如 `panini-prizm`）。品牌/系列由 VLM 纯文本
+> 识别稳定返回，无需别名表；员工只需保证 `names` 的 key 与 VLM 返回的 brand/series
+> 一致（脚本会小写 + 去空白归一化）。
 
 ## 新增一个折射 = 两种方式
 
-1. **手填**：在 `refractions` 里加一个条目（+ 需要的话在 `aliases` 补新品牌/系列），跑 `python scripts/embed.py`；
+1. **手填**：在 `refractions` 里加一个条目，跑 `python scripts/embed.py`；
 2. **命令**：`python scripts/add_type.py --pattern hyper --color 无 --series panini-prizm --name Hyper折 --name-en Hyper --keywords "hyper,海波折"`（自动写文件 + 重建）。
 
 ## 已登记的 品牌→系列
 
-`panini-prizm`、`topps-chrome`（见 `names`/`aliases`）。
+`panini-prizm`、`topps-chrome`（见各条目的 `names`）。
