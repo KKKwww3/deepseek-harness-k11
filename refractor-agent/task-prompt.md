@@ -13,10 +13,12 @@
 
 步骤：
 1. 用 glob 列出该目录下的图片，分辨出正面图与反面图（通常各一张）。
-2. 用 refractor-vlm 技能同时看正/反面，识别折射外观，必须输出结构化
-   { pattern, color, brand, series, desc }。图案与颜色取自受控枚举；
-   brand/series 以反面版权信息为准。
-3. 同图案不同颜色是不同折射（碎冰银/碎冰红/碎冰蓝各自独立），不要合并。
+2. 定位 refractor-agent 目录（仓库内；先用 pwd/find 确认），cd 进去后调用
+   scripts/vlm.py 同时看正/反面，获取结构化 { pattern, color, brand, series,
+   desc }。不要自己看图编造识别结果。
+3. 按 refractor-vlm 技能校验输出：图案/颜色在受控枚举内、brand/series 以
+   反面版权信息为准；同图案不同颜色是不同折射（碎冰银/碎冰红/碎冰蓝各自
+   独立），不要合并。
 4. 调用 scripts/match.py，传入该结构化识别结果做向量匹配，得到标准名词。
 5. 按 refractor-match 技能把结果写成一条 JSON，用 write 工具写入 {out_path}。
 6. 匹配分低于阈值或无法判定 → needsReview 置 true，并按规范追加 review.jsonl。

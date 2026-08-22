@@ -42,8 +42,8 @@ refractor-agent/
 ├── requirements.txt         脚本 Python 依赖
 ├── preset/
 │   ├── preset.yml           Agent 预设元数据
-│   └── agent.cordis.yml     装配清单（persona + 工具集）
-├── skills/                  识别技能（源文件，按需拷入项目 .dsh/skills/）
+│   └── agent.cordis.yml     装配清单（persona + 工具集；安装副本 → apps/cli/config/agent-presets/refractor/）
+├── skills/                  识别技能源文件（安装副本 → 项目根 .dsh/skills/）
 │   ├── refractor-vlm/       VLM 识别指引：强制图案+颜色结构化 + 自判定品牌/系列
 │   └── refractor-match/     全局类型匹配 + 系列命名、置信度与 review 规则
 ├── dicts/                   员工维护的词典（单文件构建源）
@@ -138,6 +138,25 @@ refractions:
 - `needsReview` 项由员工复核后：在 `dicts/refractions.yml` 里补 keywords（或登记新折射 + 系列叫法），下次自动命中。
 - ⚠️ 阈值随 embedding 模型和金标集变化：扩充金标集后务必重跑
   `scripts/evaluate.py --sweep` 复核（见 `eval/README.md`）。
+
+## 安装到 DeepSeek Harness（DSH web / headless）
+
+refractor-agent 是 DSH 标准 Agent：**preset（persona+工具组合）+ 两个技能**。安装 = 复制两份副本到运行时的发现根（源文件始终以 `refractor-agent/` 为准）：
+
+```sh
+# ① 注册 Agent preset（部署自带目录，web 的 agent 列表会出现「折射名词规范化助手」）
+mkdir -p apps/cli/config/agent-presets/refractor
+cp refractor-agent/preset/agent.cordis.yml refractor-agent/preset/preset.yml \
+   apps/cli/config/agent-presets/refractor/
+
+# ② 安装技能（项目根 .dsh/skills，skill-filesystem 的 project-dsh 根）
+mkdir -p .dsh/skills
+cp -r refractor-agent/skills/refractor-vlm refractor-agent/skills/refractor-match .dsh/skills/
+```
+
+> - 两个位置均已入库（部署自带）；**改源文件（refractor-agent/preset 或 skills）后要同步副本**。
+> - preset 发现每次调用重扫文件系统（无需重启）；skill 目录若在进程启动后新建，需重启 `dsh web`（PM2: `pm2 restart dsh-web`）让 watcher 重建。
+> - 装好后在 web 新建会话即可选择「折射名词规范化助手」Agent，技能 `refractor-vlm` / `refractor-match` 自动进入该会话目录。
 
 ## 运行方式
 
