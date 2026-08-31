@@ -1,0 +1,28 @@
+{
+  "name": "refractor-agent-node",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.19"
+  },
+  "scripts": {
+    "build": "esbuild src/dshPlugin.ts --bundle --format=esm --platform=node --outfile=dist/refractor-plugin.mjs --external:yaml --external:pg --external:@lancedb/lancedb --external:better-sqlite3",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@lancedb/lancedb": "^0.37.1",
+    "better-sqlite3": "^13.0.3",
+    "pg": "^8.23.0",
+    "yaml": "^2.9.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^26.4.0",
+    "@types/pg": "^8.23.1",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11"
+  }
+}

@@ -7,8 +7,10 @@ group the script: calls the VLM (see ``vlm.py``) on the group images to produce
 a structured recognition, vector-matches it to a standard term, and writes the
 result. Low-confidence / failed groups land in review.jsonl.
 
-Manifest contract: pending -> in-flight -> done; done/skipped is never
-reprocessed, so an interrupted run resumes safely.
+Manifest contract: pending -> in-flight -> done. Failed items are classified
+into retryable_failed (retried on the next run, up to BATCH_MAX_ATTEMPTS),
+review_required (business validation failures, human review), and terminal_failed
+(never reprocessed, like done/skipped), so an interrupted run resumes safely.
 
 VLM env: VLM_BASE_URL / VLM_API_KEY / VLM_MODEL (see scripts/vlm.py)
 """
@@ -17,11 +19,52 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
 from refract_store import load_env
-from vlm import IMAGE_EXTS, recognize
+from vlm import IMAGE_EXTS, VLMResponseError, recognize
+
+DEFAULT_MAX_BATCH_ATTEMPTS = 3
+REVIEW_ERROR_CODES = {"business_validation_failed"}
+
+
+def max_batch_attempts() -> int:
+    """Read the bounded whole-item retry limit from deployment configuration."""
+    value = os.environ.get("BATCH_MAX_ATTEMPTS")
+    if value is None:
+        return DEFAULT_MAX_BATCH_ATTEMPTS
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise ValueError("BATCH_MAX_ATTEMPTS must be an integer") from exc
+    if not 1 <= parsed <= 10:
+        raise ValueError("BATCH_MAX_ATTEMPTS must be between 1 and 10")
+    return parsed
+
+
+def classify_failure(exc: Exception, attempt: int, limit: int) -> tuple[str, bool]:
+    """Classify a failed item for the next run and human review."""
+    code = getattr(exc, "code", "batch_error")
+    if code in REVIEW_ERROR_CODES:
+        return "review_required", False
+    retryable = isinstance(exc, VLMResponseError) and bool(exc.retryable)
+    if retryable and attempt < limit:
+        return "retryable_failed", True
+    return "terminal_failed", False
+
+
+def failure_record(item: dict, exc: Exception, status: str, retryable: bool) -> dict:
+    """Build a bounded, structured failure record without provider secrets."""
+    return {
+        "itemId": item["id"],
+        "status": status,
+        "attempt": item["attempt"],
+        "errorCode": getattr(exc, "code", "batch_error"),
+        "retryable": retryable,
+        "lastError": str(exc)[:500],
+    }
 
 
 def load_manifest(work_dir: Path) -> list[dict]:
@@ -84,8 +127,9 @@ def main() -> int:
     # match is invoked via its own module for clarity below
 
     ok = fail = review = 0
+    attempt_limit = max_batch_attempts()
     for item in manifest:
-        if item["status"] in ("done", "skipped"):
+        if item["status"] in ("done", "skipped", "terminal_failed", "review_required"):
             continue
         item["status"] = "in-flight"
         save_manifest(work_dir, manifest)
@@ -112,13 +156,20 @@ def main() -> int:
                     fh.write(json.dumps(record, ensure_ascii=False) + "\n")
             item["status"] = "done"
             save_manifest(work_dir, manifest)
-        except Exception as exc:  # noqa: BLE001 - report any failure and retryable
-            fail += 1
-            item["status"] = "in-flight"
+        except Exception as exc:  # noqa: BLE001 - classified by error code below
+            attempt = item.get("attempt", 0) + 1
+            item["attempt"] = attempt
+            status, retryable = classify_failure(exc, attempt, attempt_limit)
+            item["status"] = status
             save_manifest(work_dir, manifest)
             with rev_path.open("a", encoding="utf-8") as fh:
-                fh.write(json.dumps({"itemId": item["id"], "error": str(exc)}, ensure_ascii=False) + "\n")
-            print(f"failed {item['id']}: {exc}", file=sys.stderr)
+                fh.write(json.dumps(failure_record(item, exc, status, retryable),
+                                    ensure_ascii=False) + "\n")
+            if status == "review_required":
+                review += 1
+            else:
+                fail += 1
+            print(f"failed {item['id']} ({status}): {exc}", file=sys.stderr)
 
     print(f"summary: ok={ok} review={review} fail={fail}")
     return 0

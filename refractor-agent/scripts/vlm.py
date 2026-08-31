@@ -19,7 +19,10 @@ from __future__ import annotations
 import base64
 import json
 import os
+import socket
 import sys
+import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -27,8 +30,28 @@ from typing import Any
 import yaml
 
 from refract_store import load_env
+from schemas import (
+    RecognitionValidationError,
+    validate_recognition,
+)
 
 DEFAULT_MODEL = "doubao-seed-2-0-lite-260428"
+DEFAULT_TIMEOUT_SECONDS = 180
+DEFAULT_MAX_OUTPUT_TOKENS = 500
+DEFAULT_MAX_PROVIDER_BYTES = 256 * 1024
+DEFAULT_MAX_TEXT_BYTES = 16 * 1024
+DEFAULT_SCHEMA_RETRIES = 1
+DEFAULT_NETWORK_RETRIES = 2
+DEFAULT_RETRY_BACKOFF_SECONDS = 1.0
+DEFAULT_RETRY_MODE = "same"
+RETRY_MODES = ("repair", "same")
+RETRY_NOTE_DETAIL_CHARS = 200
+MAX_RETRY_COUNT = 10
+MAX_RETRY_BACKOFF_SECONDS = 60.0
+MAX_PATTERN_CHARS = 40
+MAX_COLOR_CHARS = 20
+MAX_IDENTIFIER_CHARS = 80
+MAX_DESC_CHARS = 300
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 MIME = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
         ".webp": "image/webp", ".gif": "image/gif"}
@@ -136,43 +159,248 @@ def _req_env(name: str) -> str:
     return value
 
 
-def recognize(images: list[str | Path]) -> dict[str, Any]:
-    """Recognize card images into a structured refraction dict.
+def _int_env(name: str, default: int) -> int:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an integer") from exc
+    if parsed < 0:
+        raise ValueError(f"{name} must be non-negative")
+    return parsed
 
-    Each item may be a local path, an http(s) URL, a data: URI, or raw base64
-    (see ``to_image_url``).
+
+def _bounded_int_env(name: str, default: int, maximum: int) -> int:
+    value = _int_env(name, default)
+    if value > maximum:
+        raise ValueError(f"{name} must be <= {maximum}")
+    return value
+
+
+def _float_env(name: str, default: float) -> float:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a number") from exc
+    if parsed < 0:
+        raise ValueError(f"{name} must be non-negative")
+    return parsed
+
+
+class VLMResponseError(RuntimeError):
+    """Base class for controlled VLM response failures."""
+
+    code = "vlm_response_error"
+    retryable = False
+
+    def __init__(self, message: str):
+        super().__init__(f"{self.code}: {message}")
+
+
+class VLMResponseTooLargeError(VLMResponseError):
+    code = "model_text_too_large"
+    retryable = True
+
+
+class VLMTransportTooLargeError(VLMResponseError):
+    code = "provider_response_too_large"
+
+
+class VLMResponseValidationError(VLMResponseError):
+    code = "schema_validation_failed"
+    retryable = True
+
+
+class VLMBusinessValidationError(VLMResponseError):
+    code = "business_validation_failed"
+
+
+class VLMNetworkError(VLMResponseError):
+    code = "provider_network_error"
+    retryable = True
+
+
+class VLMTransientHTTPError(VLMResponseError):
+    code = "provider_transient_error"
+    retryable = True
+
+
+class VLMPermanentHTTPError(VLMResponseError):
+    code = "provider_permanent_error"
+
+
+def _read_limited(response, max_bytes: int) -> bytes:
+    """Read at most max_bytes+1 and reject oversized provider responses."""
+    data = response.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise VLMTransportTooLargeError(
+            f"provider response exceeds {max_bytes} bytes"
+        )
+    return data
+
+
+def _parse_and_validate(text: str) -> dict[str, str]:
+    max_text_bytes = _int_env("VLM_MAX_TEXT_BYTES", DEFAULT_MAX_TEXT_BYTES)
+    if len(text.encode("utf-8")) > max_text_bytes:
+        raise VLMResponseTooLargeError(
+            f"model text exceeds {max_text_bytes} bytes"
+        )
+
+    normalized = text.strip()
+    if normalized.startswith("```"):
+        lines = normalized.splitlines()
+        if len(lines) < 3 or not lines[-1].strip().startswith("```"):
+            raise VLMResponseValidationError("unterminated markdown fence")
+        normalized = "\n".join(lines[1:-1]).strip()
+
+    try:
+        parsed = json.loads(normalized)
+    except json.JSONDecodeError as exc:
+        raise VLMResponseValidationError("VLM output is not valid JSON") from exc
+
+    try:
+        with (ROOT / "dicts" / "refractions.yml").open(encoding="utf-8") as fh:
+            dictionary = yaml.safe_load(fh) or {}
+        pairs = {
+            (entry.get("pattern"), entry.get("color"))
+            for entry in dictionary.get("refractions", [])
+            if isinstance(entry, dict)
+        }
+        return validate_recognition(
+            parsed,
+            set(controlled_enum()[0]),
+            set(controlled_enum()[1]),
+            pairs=pairs,
+        )
+    except RecognitionValidationError as exc:
+        if exc.code == "business_validation_failed" or exc.code == "enum_validation_failed":
+            raise VLMBusinessValidationError(str(exc)) from exc
+        raise VLMResponseValidationError(str(exc)) from exc
+
+
+def _is_transient_http(code: int) -> bool:
+    return code == 408 or code == 409 or code == 425 or code == 429 or 500 <= code <= 599
+
+
+def _retry_delay(attempt: int) -> float:
+    base = min(
+        _float_env("VLM_RETRY_BACKOFF_SECONDS", DEFAULT_RETRY_BACKOFF_SECONDS),
+        MAX_RETRY_BACKOFF_SECONDS,
+    )
+    return min(base * (2 ** attempt), MAX_RETRY_BACKOFF_SECONDS)
+
+
+def _retry_note(exc: Exception) -> str:
+    """Protocol-error note appended to the original instruction on a repair retry.
+
+    Only the validation-error summary is echoed back; the rejected raw output is
+    never re-sent to the model.
+    """
+    detail = " ".join(str(exc).split())[:RETRY_NOTE_DETAIL_CHARS]
+    return (
+        "补充要求：上一次响应不符合协议（" + detail + "）。"
+        "请在完整遵守上述全部规则的前提下，只返回一个严格 JSON 对象："
+        "包含且只能包含 pattern、color、brand、series、desc 五个字符串字段，"
+        "不要 Markdown、解释或额外字段。"
+    )
+
+
+def _request_body(req: urllib.request.Request, timeout: int, max_bytes: int) -> dict:
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = _read_limited(resp, max_bytes)
+    except urllib.error.HTTPError as exc:
+        if _is_transient_http(exc.code):
+            raise VLMTransientHTTPError(f"VLM API transient HTTP error {exc.code}") from exc
+        raise VLMPermanentHTTPError(f"VLM API HTTP error {exc.code}") from exc
+    except (urllib.error.URLError, TimeoutError, socket.timeout, ConnectionError) as exc:
+        raise VLMNetworkError("VLM API network or timeout error") from exc
+    try:
+        parsed = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise VLMResponseValidationError("provider response is not valid JSON") from exc
+    if not isinstance(parsed, dict):
+        raise VLMResponseValidationError("provider response must be a JSON object")
+    return parsed
+
+
+
+def recognize(images: list[str | Path]) -> dict[str, Any]:
+    """Recognize images with bounded protocol and network retries.
+
+    Schema failures get one bounded retry: ``VLM_RETRY_MODE=same`` (default)
+    resends the identical request; ``repair`` resends the original instruction
+    with the validation-error note appended. Network failures and transient HTTP
+    failures use bounded exponential backoff. Permanent failures and oversized
+    responses are not retried blindly.
     """
     load_env()
     base = _req_env("VLM_BASE_URL").rstrip("/")
     key = _req_env("VLM_API_KEY")
     model = os.environ.get("VLM_MODEL") or DEFAULT_MODEL
-
-    content: list[dict] = [{"type": "input_text", "text": build_prompt()}]
-    content += [{"type": "input_image", "image_url": to_image_url(p)} for p in images]
-    payload = json.dumps(
-        {"model": model, "input": [{"role": "user", "content": content}], "temperature": 0}
-    ).encode("utf-8")
-    req = urllib.request.Request(
-        base + "/responses",
-        data=payload,
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"},
+    timeout = _int_env("VLM_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS)
+    max_provider_bytes = _int_env(
+        "VLM_MAX_PROVIDER_BYTES", DEFAULT_MAX_PROVIDER_BYTES
     )
-    try:
-        with urllib.request.urlopen(req, timeout=180) as resp:
-            body = json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", "replace")[:300]
-        raise RuntimeError(f"VLM API error {exc.code}: {detail}") from exc
+    schema_retries = _bounded_int_env(
+        "VLM_SCHEMA_RETRIES", DEFAULT_SCHEMA_RETRIES, MAX_RETRY_COUNT
+    )
+    network_retries = _bounded_int_env(
+        "VLM_NETWORK_RETRIES", DEFAULT_NETWORK_RETRIES, MAX_RETRY_COUNT
+    )
+    max_output_tokens = _int_env(
+        "VLM_MAX_OUTPUT_TOKENS", DEFAULT_MAX_OUTPUT_TOKENS
+    )
 
-    text = _extract_text(body)
-    # tolerate fenced JSON even though the prompt forbids it
-    text = text.strip()
-    if text.startswith("```"):
-        text = text.split("\n", 1)[1].rsplit("```", 1)[0]
-    parsed = json.loads(text)
-    if not isinstance(parsed, dict):
-        raise ValueError("VLM did not return a JSON object")
-    return parsed
+    image_content = [
+        {"type": "input_image", "image_url": to_image_url(p)} for p in images
+    ]
+    base_instruction = build_prompt()
+    retry_mode = os.environ.get("VLM_RETRY_MODE", DEFAULT_RETRY_MODE).strip().lower()
+    if retry_mode not in RETRY_MODES:
+        raise ValueError("VLM_RETRY_MODE must be 'repair' or 'same'")
+    instruction = base_instruction
+    protocol_attempt = 0
+    network_attempt = 0
+    while True:
+        content: list[dict] = [{"type": "input_text", "text": instruction}]
+        content += image_content
+        payload = json.dumps(
+            {
+                "model": model,
+                "input": [{"role": "user", "content": content}],
+                "temperature": 0,
+                "max_output_tokens": max_output_tokens,
+            }
+        ).encode("utf-8")
+        req = urllib.request.Request(
+            base + "/responses",
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {key}",
+            },
+        )
+        try:
+            body = _request_body(req, timeout, max_provider_bytes)
+            text = _extract_text(body)
+            return _parse_and_validate(text)
+        except (VLMResponseValidationError, VLMResponseTooLargeError) as exc:
+            if protocol_attempt >= schema_retries:
+                raise
+            protocol_attempt += 1
+            if retry_mode == "repair":
+                instruction = base_instruction + "\n" + _retry_note(exc)
+        except (VLMNetworkError, VLMTransientHTTPError):
+            if network_attempt >= network_retries:
+                raise
+            time.sleep(_retry_delay(network_attempt))
+            network_attempt += 1
 
 
 def _extract_text(body: dict) -> str:
@@ -186,7 +414,7 @@ def _extract_text(body: dict) -> str:
                 parts.append(content.get("text", ""))
     text = "".join(parts).strip()
     if not text:
-        raise RuntimeError(f"VLM returned no message text: {json.dumps(body)[:300]}")
+        raise VLMResponseValidationError("VLM returned no message text")
     return text
 
 

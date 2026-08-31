@@ -1,0 +1,22 @@
+# refractor-agent 全量依赖锁定（含传递依赖）
+# 由 .venv pip freeze 生成；新环境/CI 用本文件安装以保证完全可复现
+# 直接依赖见 requirements.txt；两者需同步更新
+annotated-types==0.8.0
+deprecation==2.1.0
+lance-namespace==0.11.1
+lance-namespace-urllib3-client==0.11.1
+lancedb==0.37.1
+numpy==2.5.2
+packaging==26.3
+psycopg==3.3.4
+psycopg-binary==3.3.4
+pyarrow==25.0.1
+pydantic==2.13.5
+pydantic_core==2.46.5
+python-dateutil==2.9.0.post0
+PyYAML==6.0.3
+six==1.17.0
+tqdm==4.70.0
+typing-inspection==0.4.4
+typing_extensions==4.16.0
+urllib3==2.7.0
